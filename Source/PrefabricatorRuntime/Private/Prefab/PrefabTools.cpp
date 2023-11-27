@@ -1093,6 +1093,7 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 				// Create a new child actor.  Try to create it from an existing template actor that is already preset in the scene
 
 				Comp = PrefabActor->AddComponentByClass(CompClass, false, CompItemData.RelativeTransform, false);
+				Comp->Rename(*CompItemData.ComponentName);				
 
 				// Load the prefab properties in
 				LoadComponentState(Comp, CompItemData, InSettings);
