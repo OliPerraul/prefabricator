@@ -69,6 +69,15 @@ struct PREFABRICATORRUNTIME_API FPrefabricatorComponentData {
 	GENERATED_USTRUCT_BODY()
 
 	UPROPERTY()
+	FGuid PrefabItemID;
+
+	UPROPERTY()
+	FString ClassPath;
+
+	UPROPERTY()
+	FSoftClassPath ClassPathRef;
+
+	UPROPERTY()
 	FTransform RelativeTransform;
 
 	UPROPERTY()
@@ -148,6 +157,10 @@ UCLASS(Blueprintable)
 class PREFABRICATORRUNTIME_API UPrefabricatorAsset : public UPrefabricatorAssetInterface {
 	GENERATED_UCLASS_BODY()
 public:
+
+	UPROPERTY()
+	TArray<FPrefabricatorComponentData> ComponentData;
+
 	UPROPERTY()
 	TArray<FPrefabricatorActorData> ActorData;
 

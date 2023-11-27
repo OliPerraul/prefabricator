@@ -20,9 +20,20 @@
 #include "Serialization/ObjectWriter.h"
 #include "UObject/NoExportTypes.h"
 
+// Unsupported component (seem to be added by default), that's why this is causing issue
+#include "Components/BillboardComponent.h"
+
 DEFINE_LOG_CATEGORY_STATIC(LogPrefabTools, Log, All);
 
 #define LOCTEXT_NAMESPACE "PrefabTools"
+
+namespace
+{
+	bool IsSupportedComponent(UActorComponent* Comp)
+	{
+		return Comp && !Comp->IsA(UBillboardComponent::StaticClass()) && !Comp->IsA(UPrefabComponent::StaticClass());
+	}
+}
 
 void FPrefabTools::GetSelectedActors(TArray<AActor*>& OutActors)
 {
@@ -209,6 +220,18 @@ void FPrefabTools::AssignAssetUserData(AActor* InActor, const FGuid& InItemID, A
 	PrefabUserData->ItemID = InItemID;
 }
 
+void FPrefabTools::AssignAssetUserData(UActorComponent* InComp, const FGuid& InItemID, APrefabActor* Prefab)
+{
+	UPrefabricatorAssetUserData* PrefabUserData = InComp->GetAssetUserData<UPrefabricatorAssetUserData>();
+	if (!PrefabUserData) {
+		PrefabUserData = NewObject<UPrefabricatorAssetUserData>(InComp);
+		InComp->AddAssetUserData(PrefabUserData);
+	}
+
+	PrefabUserData->PrefabActor = Prefab;
+	PrefabUserData->ItemID = InItemID;
+}
+
 
 void FPrefabTools::SaveStateToPrefabAsset(APrefabActor* PrefabActor)
 {
@@ -226,6 +249,10 @@ void FPrefabTools::SaveStateToPrefabAsset(APrefabActor* PrefabActor)
 	PrefabAsset->PrefabMobility = PrefabActor->GetRootComponent()->Mobility;
 
 	PrefabAsset->ActorData.Reset();
+	PrefabAsset->ComponentData.Reset();
+
+	TArray<UActorComponent*> Components;
+	PrefabActor->GetComponents(Components, false);
 
 	TArray<AActor*> Children;
 	GetActorChildren(PrefabActor, Children);
@@ -233,6 +260,19 @@ void FPrefabTools::SaveStateToPrefabAsset(APrefabActor* PrefabActor)
 	// Make sure the children do not have duplicate asset user data template ids
 	{
 		TSet<FGuid> VisitedItemId;
+		for (UActorComponent* Comp : Components) {
+			if (!IsSupportedComponent(Comp))
+				continue;
+			UPrefabricatorAssetUserData* CompUserData = Comp->GetAssetUserData<UPrefabricatorAssetUserData>();
+			if (CompUserData) {
+				if (VisitedItemId.Contains(CompUserData->ItemID)) {
+					CompUserData->ItemID = FGuid::NewGuid();
+					CompUserData->Modify();
+				}
+				VisitedItemId.Add(CompUserData->ItemID);
+			}
+		}
+
 		for (AActor* ChildActor : Children) {
 			if (ChildActor && ChildActor->GetRootComponent()) {
 				UPrefabricatorAssetUserData* ChildUserData = ChildActor->GetRootComponent()->GetAssetUserData<UPrefabricatorAssetUserData>();
@@ -248,12 +288,38 @@ void FPrefabTools::SaveStateToPrefabAsset(APrefabActor* PrefabActor)
 	}
 
 	struct FSaveContext {
-		AActor* ChildActor;
-		int32 ItemIndex;
+		UActorComponent* Comp = nullptr;
+		AActor* ChildActor = nullptr;
+		int32 ItemIndex = 0;
 	};
 
 	FPrefabActorLookup ActorCrossReferences;
 	TArray<FSaveContext> ItemsToSave;
+	// Support for saving components at the root of the prefab
+	for (UActorComponent* Comp : Components) {
+		if (!IsSupportedComponent(Comp))
+			continue;
+		UPrefabricatorAssetUserData* CompUserData = Comp->GetAssetUserData<UPrefabricatorAssetUserData>();
+		FGuid ItemID;
+		if (CompUserData && CompUserData->PrefabActor == PrefabActor) {
+			ItemID = CompUserData->ItemID;
+		}
+		else {
+			ItemID = FGuid::NewGuid();
+		}
+		AssignAssetUserData(Comp, ItemID, PrefabActor);
+		int32 NewItemIndex = PrefabAsset->ComponentData.AddDefaulted();
+		FPrefabricatorComponentData& CompData = PrefabAsset->ComponentData[NewItemIndex];
+		CompData.PrefabItemID = ItemID;
+		// TODO: Support child actor referencing prefab component
+		// ActorCrossReferences.Register(ChildActor, ItemID);
+
+		FSaveContext SaveInfo;
+		SaveInfo.Comp = Comp;
+		SaveInfo.ItemIndex = NewItemIndex;
+		ItemsToSave.Add(SaveInfo);
+	}
+
 	for (AActor* ChildActor : Children) {
 		if (ChildActor && ChildActor->GetRootComponent()) {
 			UPrefabricatorAssetUserData* ChildUserData = ChildActor->GetRootComponent()->GetAssetUserData<UPrefabricatorAssetUserData>();
@@ -278,10 +344,17 @@ void FPrefabTools::SaveStateToPrefabAsset(APrefabActor* PrefabActor)
 	}
 
 	for (const FSaveContext& SaveInfo : ItemsToSave) {
-		AActor* ChildActor = SaveInfo.ChildActor;
-		if (ChildActor && ChildActor->GetRootComponent()) {
-			FPrefabricatorActorData& ActorData = PrefabAsset->ActorData[SaveInfo.ItemIndex];
-			SaveActorState(ChildActor, PrefabActor, ActorCrossReferences, ActorData);
+		if (AActor* ChildActor = SaveInfo.ChildActor)
+		{
+			if (ChildActor && ChildActor->GetRootComponent()) {
+				FPrefabricatorActorData& ActorData = PrefabAsset->ActorData[SaveInfo.ItemIndex];
+				SaveActorState(ChildActor, PrefabActor, ActorCrossReferences, ActorData);
+			}
+		}
+		else if (UActorComponent* Comp = SaveInfo.Comp)
+		{
+			FPrefabricatorComponentData& CompData = PrefabAsset->ComponentData[SaveInfo.ItemIndex];
+			SaveComponentState(Comp, PrefabActor, ActorCrossReferences, CompData);
 		}
 	}
 	PrefabAsset->Version = (uint32)EPrefabricatorAssetVersion::LatestVersion;
@@ -697,6 +770,67 @@ void FPrefabTools::SaveActorState(AActor* InActor, APrefabActor* PrefabActor, co
 	//DumpSerializedData(OutActorData);
 }
 
+void FPrefabTools::SaveComponentState(UActorComponent* InComp, APrefabActor* PrefabActor, const FPrefabActorLookup& CrossReferences, FPrefabricatorComponentData& OutCompData)
+{
+	// TODO: Support scene component
+	// FPrefabricatorComponentData::RelativeTransform
+	OutCompData.ComponentName = InComp->GetPathName(PrefabActor);
+	FString ClassPath = InComp->GetClass()->GetPathName();
+	OutCompData.ClassPathRef = FSoftClassPath(ClassPath);
+	OutCompData.ClassPath = ClassPath;
+	AActor* ActorCDO = Cast<AActor>(PrefabActor->GetArchetype());
+	UObject* CompCDO = FindBestComponentInCDO(ActorCDO, InComp);
+	SerializeFields(InComp, CompCDO, PrefabActor, CrossReferences, OutCompData.Properties);
+}
+
+
+void FPrefabTools::LoadComponentState(UActorComponent* InComp, const FPrefabricatorComponentData& InCompData, const FPrefabLoadSettings& InSettings)
+{
+	SCOPE_CYCLE_COUNTER(STAT_LoadActorState);
+	if (!InComp) {
+		return;
+	}
+
+	TSharedPtr<IPrefabricatorService> Service = FPrefabricatorService::Get();
+	if (Service.IsValid()) {
+		SCOPE_CYCLE_COUNTER(STAT_LoadActorState_BeginTransaction);
+		//Service->BeginTransaction(LOCTEXT("TransLabel_LoadPrefab", "Load Prefab"));
+	}
+
+	{
+		SCOPE_CYCLE_COUNTER(STAT_LoadActorState_DeserializeFieldsActor);
+		DeserializeFields(InComp, InCompData.Properties);
+	}
+
+	bool bPreviouslyRegister;
+	{
+		//SCOPE_CYCLE_COUNTER(STAT_LoadActorState_UnregisterComponent);
+		bPreviouslyRegister = InComp->IsRegistered();
+		if (InSettings.bUnregisterComponentsBeforeLoading && bPreviouslyRegister) {
+			InComp->UnregisterComponent();
+		}
+	}
+
+	{
+		SCOPE_CYCLE_COUNTER(STAT_LoadActorState_DeserializeFieldsComponents);
+		DeserializeFields(InComp, InCompData.Properties);
+	}
+
+	{
+		//SCOPE_CYCLE_COUNTER(STAT_LoadActorState_RegisterComponent);
+		if (InSettings.bUnregisterComponentsBeforeLoading && bPreviouslyRegister) {
+			InComp->RegisterComponent();
+		}
+	}		
+
+	InComp->PostLoad();
+
+	if (Service.IsValid()) {
+		SCOPE_CYCLE_COUNTER(STAT_LoadActorState_EndTransaction);
+		//Service->EndTransaction();
+	}
+}
+
 void FPrefabTools::LoadActorState(AActor* InActor, const FPrefabricatorActorData& InActorData, const FPrefabLoadSettings& InSettings)
 {
 	SCOPE_CYCLE_COUNTER(STAT_LoadActorState);
@@ -716,9 +850,11 @@ void FPrefabTools::LoadActorState(AActor* InActor, const FPrefabricatorActorData
 	}
 
 	TMap<FString, UActorComponent*> ComponentsByName;
-	for (UActorComponent* Component : InActor->GetComponents()) {
-		FString ComponentPath = Component->GetPathName(InActor);
-		ComponentsByName.Add(ComponentPath, Component);
+	for (UActorComponent* Comp : InActor->GetComponents()) {
+		if (!IsSupportedComponent(Comp))
+			continue;
+		FString ComponentPath = Comp->GetPathName(InActor);
+		ComponentsByName.Add(ComponentPath, Comp);
 	}
 
 	{
@@ -883,10 +1019,23 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 	TArray<AActor*> ExistingActorPool;
 	GetActorChildren(PrefabActor, ExistingActorPool);
 
+	TArray<UActorComponent*> ExistingComponents;
+	PrefabActor->GetComponents(ExistingComponents, false);
+
 	FPrefabInstanceTemplates* LoadState = FGlobalPrefabInstanceTemplates::Get();
 	TSharedPtr<IPrefabricatorService> Service = FPrefabricatorService::Get();
 
-	TMap<FGuid, AActor*> ActorByItemID;
+	TMap<FGuid, UActorComponent*> CompByItemID;
+	for (UActorComponent* ExistingComp : ExistingComponents) {
+		if (!IsSupportedComponent(ExistingComp))
+			continue;
+		UPrefabricatorAssetUserData* PrefabUserData = ExistingComp->GetAssetUserData<UPrefabricatorAssetUserData>();
+		if (PrefabUserData && PrefabUserData->PrefabActor == PrefabActor) {	
+			CompByItemID.Add(PrefabUserData->ItemID, ExistingComp);
+		}
+	}	
+	
+	TMap<FGuid, AActor*> ActorByItemID;	
 	for (AActor* ExistingActor : ExistingActorPool) {
 		if (ExistingActor && ExistingActor->GetRootComponent()) {
 			UPrefabricatorAssetUserData* PrefabUserData = ExistingActor->GetRootComponent()->GetAssetUserData<UPrefabricatorAssetUserData>();
@@ -904,7 +1053,60 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 	if (Service.IsValid()) {
 		UWorld* World = PrefabActor->GetWorld();
 		TMap<FGuid, AActor*> PrefabItemToActorMap;
+		TMap<FGuid, UActorComponent*> PrefabItemToComponentMap;
 
+		// Prefab component support
+		for (FPrefabricatorComponentData& CompItemData : PrefabAsset->ComponentData) {
+			if (!CompItemData.ClassPathRef.IsValid()) {
+				CompItemData.ClassPathRef = CompItemData.ClassPath;
+			}
+
+			if (CompItemData.ClassPathRef.GetAssetPathString() != CompItemData.ClassPath) {
+				CompItemData.ClassPath = CompItemData.ClassPathRef.GetAssetPathString();
+			}
+
+			UClass* CompClass = LoadObject<UClass>(nullptr, *CompItemData.ClassPathRef.GetAssetPathString());
+			if (!CompClass) continue;
+
+			UActorComponent* Comp = nullptr;
+			bool bPrefabOutOfDate = PrefabActor->LastUpdateID != PrefabAsset->LastUpdateID;
+			if (!bPrefabOutOfDate) {
+				// The prefab is not out of date. try to reuse an existing actor item
+				if (UActorComponent** SearchResult = CompByItemID.Find(CompItemData.PrefabItemID)) {
+					Comp = *SearchResult;
+					if (Comp) {
+						FString ExistingClassName = Comp->GetClass()->GetPathName();
+						FString RequiredClassName = CompItemData.ClassPathRef.GetAssetPathString();
+						if (ExistingClassName == RequiredClassName) {
+							// We can reuse this actor
+							ExistingComponents.Remove(Comp);
+							ActorByItemID.Remove(CompItemData.PrefabItemID);
+						}
+						else {
+							Comp = nullptr;
+						}
+					}
+				}
+			}
+
+			if (!Comp) {
+				// Create a new child actor.  Try to create it from an existing template actor that is already preset in the scene
+
+				Comp = PrefabActor->AddComponentByClass(CompClass, false, CompItemData.RelativeTransform, false);
+
+				// Load the prefab properties in
+				LoadComponentState(Comp, CompItemData, InSettings);
+			}
+
+			AssignAssetUserData(Comp, CompItemData.PrefabItemID, PrefabActor);
+
+			{
+				UActorComponent*& CompRef = PrefabItemToComponentMap.FindOrAdd(CompItemData.PrefabItemID);
+				CompRef = Comp;
+			}
+		}
+
+		// Actor component support
 		for (FPrefabricatorActorData& ActorItemData : PrefabAsset->ActorData) {
 			// Handle backward compatibility
 			if (!ActorItemData.ClassPathRef.IsValid()) {
@@ -998,6 +1200,15 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 
 		// Fix up the cross references
 		{
+			for (const FPrefabricatorComponentData& ComponentData : PrefabAsset->ComponentData) {
+				UActorComponent** CompPtr = PrefabItemToComponentMap.Find(ComponentData.PrefabItemID);
+				if (!CompPtr) continue;
+				{
+					UActorComponent* Comp = *CompPtr;
+					FixupCrossReferences(ComponentData.Properties, Comp, PrefabItemToActorMap);
+				}
+			}
+
 			for (const FPrefabricatorActorData& ActorItemData : PrefabAsset->ActorData) {
 				AActor** ActorPtr = PrefabItemToActorMap.Find(ActorItemData.PrefabItemID);
 				if (!ActorPtr) continue;
@@ -1028,6 +1239,12 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 	// Destroy the unused actors from the pool
 	for (AActor* UnusedActor : ExistingActorPool) {
 		DestroyActorTree(UnusedActor);
+	}
+	for (UActorComponent* UnusedComp : ExistingComponents)
+	{
+		if (!IsSupportedComponent(UnusedComp))
+			continue;
+		UnusedComp->DestroyComponent();
 	}
 
 	PrefabActor->LastUpdateID = PrefabAsset->LastUpdateID;
@@ -1220,6 +1437,11 @@ void FPrefabVersionControl::UpgradeFromVersion_AddedSoftReferencesPrefabFix(UPre
 
 void FPrefabVersionControl::RefreshReferenceList(UPrefabricatorAsset* PrefabAsset)
 {
+	for (FPrefabricatorComponentData& ComponentData : PrefabAsset->ComponentData) {
+		for (UPrefabricatorProperty* ComponentProperty : ComponentData.Properties) {
+			ComponentProperty->SaveReferencedAssetValues();
+		}
+	}
 	for (FPrefabricatorActorData& Entry : PrefabAsset->ActorData) {
 		for (UPrefabricatorProperty* ActorProperty : Entry.Properties) {
 			ActorProperty->SaveReferencedAssetValues();

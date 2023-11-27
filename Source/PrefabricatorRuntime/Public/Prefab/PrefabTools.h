@@ -7,6 +7,7 @@
 class APrefabActor;
 class UPrefabricatorAsset;
 struct FPrefabricatorActorData;
+struct FPrefabricatorComponentData;
 class UPrefabricatorProperty;
 struct FRandomStream;
 
@@ -60,6 +61,7 @@ public:
 	static void CreatePrefab();
 	static APrefabActor* CreatePrefabFromActors(const TArray<AActor*>& Actors);
 	static void AssignAssetUserData(AActor* InActor, const FGuid& InItemID, APrefabActor* Prefab);
+	static void AssignAssetUserData(UActorComponent* InComp, const FGuid& InItemID, APrefabActor* Prefab);
 
 	static void SaveStateToPrefabAsset(APrefabActor* PrefabActor);
 	static void LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPrefabLoadSettings& InSettings = FPrefabLoadSettings());
@@ -84,7 +86,9 @@ public:
 
 private:
 	static void SaveActorState(AActor* InActor, APrefabActor* PrefabActor, const FPrefabActorLookup& CrossReferences, FPrefabricatorActorData& OutActorData);
+	static void SaveComponentState(UActorComponent* InComp, APrefabActor* PrefabActor, const FPrefabActorLookup& CrossReferences, FPrefabricatorComponentData& OutCompData);
 	static void LoadActorState(AActor* InActor, const FPrefabricatorActorData& InActorData, const FPrefabLoadSettings& InSettings);
+	static void LoadComponentState(UActorComponent* InComp, const FPrefabricatorComponentData& InCompData, const FPrefabLoadSettings& InSettings);
 
 };
 
