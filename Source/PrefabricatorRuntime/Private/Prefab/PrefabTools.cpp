@@ -29,7 +29,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogPrefabTools, Log, All);
 
 namespace
 {
-	bool IsSupportedComponent(UActorComponent* Comp)
+	bool IsSupportedPrefabRootComponent(UActorComponent* Comp)
 	{
 		return Comp && !Comp->IsA(UBillboardComponent::StaticClass()) && !Comp->IsA(UPrefabComponent::StaticClass());
 	}
@@ -261,7 +261,7 @@ void FPrefabTools::SaveStateToPrefabAsset(APrefabActor* PrefabActor)
 	{
 		TSet<FGuid> VisitedItemId;
 		for (UActorComponent* Comp : Components) {
-			if (!IsSupportedComponent(Comp))
+			if (!IsSupportedPrefabRootComponent(Comp))
 				continue;
 			UPrefabricatorAssetUserData* CompUserData = Comp->GetAssetUserData<UPrefabricatorAssetUserData>();
 			if (CompUserData) {
@@ -297,7 +297,7 @@ void FPrefabTools::SaveStateToPrefabAsset(APrefabActor* PrefabActor)
 	TArray<FSaveContext> ItemsToSave;
 	// Support for saving components at the root of the prefab
 	for (UActorComponent* Comp : Components) {
-		if (!IsSupportedComponent(Comp))
+		if (!IsSupportedPrefabRootComponent(Comp))
 			continue;
 		UPrefabricatorAssetUserData* CompUserData = Comp->GetAssetUserData<UPrefabricatorAssetUserData>();
 		FGuid ItemID;
@@ -875,8 +875,6 @@ void FPrefabTools::LoadActorState(AActor* InActor, const FPrefabricatorActorData
 
 	TMap<FString, UActorComponent*> ComponentsByName;
 	for (UActorComponent* Comp : InActor->GetComponents()) {
-		if (!IsSupportedComponent(Comp))
-			continue;
 		FString ComponentPath = Comp->GetPathName(InActor);
 		ComponentsByName.Add(ComponentPath, Comp);
 	}
@@ -1051,7 +1049,7 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 
 	TMap<FGuid, UActorComponent*> CompByItemID;
 	for (UActorComponent* ExistingComp : ExistingComponents) {
-		if (!IsSupportedComponent(ExistingComp))
+		if (!IsSupportedPrefabRootComponent(ExistingComp))
 			continue;
 		UPrefabricatorAssetUserData* PrefabUserData = ExistingComp->GetAssetUserData<UPrefabricatorAssetUserData>();
 		if (PrefabUserData && PrefabUserData->PrefabActor == PrefabActor) {	
@@ -1267,7 +1265,7 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 	}
 	for (UActorComponent* UnusedComp : ExistingComponents)
 	{
-		if (!IsSupportedComponent(UnusedComp))
+		if (!IsSupportedPrefabRootComponent(UnusedComp))
 			continue;
 		UnusedComp->DestroyComponent();
 	}
