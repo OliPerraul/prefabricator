@@ -62,17 +62,17 @@ void UPrefabricatorActorFactory::PostSpawnActor(UObject* Asset, AActor* NewActor
 	}
 
 }
-
-void UPrefabricatorActorFactory::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	APrefabActor* PrefabActor = Cast<APrefabActor>(CDO);
-	if (PrefabActor && PrefabActor->PrefabComponent) {
-		PrefabActor->PrefabComponent->PrefabAssetInterface = Cast<UPrefabricatorAssetInterface>(Asset);
-
-		LoadPrefabActorState(PrefabActor);
-	}
-	UE_LOG(LogPrefabricatorActorFactory, Log, TEXT("Call: UPrefabricatorActorFactory::PostCreateBlueprint"));
-}
+//
+//void UPrefabricatorActorFactory::PostCreateBlueprint(UObject* Asset, AActor* CDO)
+//{
+//	APrefabActor* PrefabActor = Cast<APrefabActor>(CDO);
+//	if (PrefabActor && PrefabActor->PrefabComponent) {
+//		PrefabActor->PrefabComponent->PrefabAssetInterface = Cast<UPrefabricatorAssetInterface>(Asset);
+//
+//		LoadPrefabActorState(PrefabActor);
+//	}
+//	UE_LOG(LogPrefabricatorActorFactory, Log, TEXT("Call: UPrefabricatorActorFactory::PostCreateBlueprint"));
+//}
 
 bool UPrefabricatorActorFactory::CanCreateActorFrom(const FAssetData& AssetData, FText& OutErrorMsg)
 {

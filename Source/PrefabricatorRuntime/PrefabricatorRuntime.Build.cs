@@ -8,6 +8,7 @@ namespace UnrealBuildTool.Rules
         {
             bUseUnity = false;
             PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+			OptimizeCode = CodeOptimization.InShippingBuildsOnly;
             PublicIncludePaths.AddRange(
 				new string[] {
 					// ... add public include paths required here ...
@@ -21,7 +22,7 @@ namespace UnrealBuildTool.Rules
 					"CoreUObject",
 				    "Engine",
                     "PropertyPath",
-                    "DeveloperSettings",
+                    "DeveloperSettings"
 					// ... add other public dependencies that you statically link with here ...
 				}
 				);
@@ -29,6 +30,7 @@ namespace UnrealBuildTool.Rules
 			PrivateDependencyModuleNames.AddRange(
 				new string[]
 				{
+					"PropertyEditor"
 					// ... add private dependencies that you statically link with here ...
 				}
 				);

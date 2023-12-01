@@ -7,8 +7,9 @@ namespace UnrealBuildTool.Rules
 		public PrefabricatorEditorPostInit(ReadOnlyTargetRules Target) : base(Target)
         {
             bUseUnity = false;
-            PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
-            PublicIncludePaths.AddRange(
+			PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+			OptimizeCode = CodeOptimization.InShippingBuildsOnly;
+			PublicIncludePaths.AddRange(
 				new string[] {
 					// ... add public include paths required here ...
                 }

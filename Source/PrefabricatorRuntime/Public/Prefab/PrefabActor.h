@@ -7,6 +7,23 @@
 #include "PrefabActor.generated.h"
 
 class UPrefabricatorAsset;
+class IPropertyHandle;
+
+UCLASS(BlueprintType, EditInlineNew, CollapseCategories)
+class PREFABRICATORRUNTIME_API UPrefabInstancePropertyChange : public UObject
+{
+	GENERATED_BODY()
+public:
+	UPROPERTY(VisibleAnywhere)
+	FString ObjectPath = "";
+
+	UPROPERTY(VisibleAnywhere)
+	FString PropertyPath = "";
+
+	UPROPERTY(EditAnywhere)
+	bool bStaged = false;
+
+};
 
 UCLASS(Blueprintable, ConversionRoot, ComponentWrapperClass)
 class PREFABRICATORRUNTIME_API APrefabActor : public AActor {
@@ -16,6 +33,9 @@ public:
 	class UPrefabComponent* PrefabComponent;
 
 public:
+	UPROPERTY(EditAnywhere, Instanced, Category = "Prefabricator", Meta=(TitleProperty="{ObjectPath}:{PropertyPath}"))
+	TArray<TObjectPtr<UPrefabInstancePropertyChange>> Changes;
+
 	/// AActor Interface 
 	virtual void Destroyed() override;
 	virtual void PostLoad() override;
@@ -23,6 +43,11 @@ public:
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& e) override;
+	void OnObjectPropertyChanged(UObject* ObjectBeingModified, FPropertyChangedEvent& PropertyChangedEvent);
+	void OnPreObjectPropertyChanged(UObject*, const class FEditPropertyChain&);
+
+	//void HandlePropertyChangedEvent(FPropertyChangedEvent& PropertyChangedEvent);
+
 	virtual void PostDuplicate(EDuplicateMode::Type DuplicateMode) override;
 	virtual FName GetCustomIconName() const override;
 #endif // WITH_EDITOR
@@ -44,12 +69,13 @@ public:
 	void RandomizeSeed(const FRandomStream& InRandom, bool bRecursive = true);
 	void HandleBuildComplete();
 
-	void OnConstruction(const FTransform& Transform) override;
-
-	void OnPropertyChanged(const TArray<UObject*>& ChangedObjects, const IPropertyHandle& PropertyHandle);
-
 private:
-	TMap< TWeakObjectPtr<UObject>, TSharedPtr<class IPropertyChangeListener> > ActivePropertyChangeListeners;
+	UPROPERTY(EditAnywhere, Category = "Prefabricator", meta=(AllowPrivateAccess = true))
+	TMap<FString, TObjectPtr<UPrefabInstancePropertyChange>> ChangeSet;
+
+	FString EditObjectPath;
+
+	TArray<FProperty*> EditPropertyChain;
 
 public:
 	// The last update ID of the prefab asset when this actor was refreshed from it

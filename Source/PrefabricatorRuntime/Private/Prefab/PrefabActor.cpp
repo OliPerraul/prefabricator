@@ -9,11 +9,17 @@
 #include "Utils/PrefabricatorStats.h"
 
 #include "IPropertyChangeListener.h"
+#include "PropertyEditorModule.h"
 
 // Unsupported component (seem to be added by default), that's why this is causing issue
 #include "Components/BillboardComponent.h"
+#include "Components/ActorComponent.h"
+
+#include "Containers/Array.h"
 
 #include "UObject/Package.h"
+
+#include <functional>
 
 DEFINE_LOG_CATEGORY_STATIC(LogPrefabActor, Log, All);
 
@@ -23,6 +29,10 @@ APrefabActor::APrefabActor(const FObjectInitializer& ObjectInitializer)
 {
 	PrefabComponent = ObjectInitializer.CreateDefaultSubobject<UPrefabComponent>(this, "PrefabComponent");
 	RootComponent = PrefabComponent;
+#if WITH_EDITOR
+	FCoreUObjectDelegates::OnObjectPropertyChanged.AddUObject(this, &APrefabActor::OnObjectPropertyChanged);
+	FCoreUObjectDelegates::OnPreObjectPropertyChanged.AddUObject(this, &APrefabActor::OnPreObjectPropertyChanged);
+#endif
 }
 
 namespace {
@@ -104,70 +114,168 @@ FName APrefabActor::GetCustomIconName() const
 	static const FName PrefabIconName("ClassIcon.PrefabActor");
 	return PrefabIconName;
 }
+//
 
-void APrefabActor::OnPropertyChanged(const TArray<UObject*>& ChangedObjects, const IPropertyHandle& PropertyHandle)
+void PrependPropertyPath(FString& PropertyPath, const FProperty* Property, int32 PropertyElementIndex = -1)
 {
-	for (UObject* Object : ChangedObjects)
+	FString NestedPropertyName = Property->GetName();
+	PropertyPath = (PropertyElementIndex < 0 ?
+		FString::Format(TEXT("|{0}"), { NestedPropertyName }) :
+		FString::Format(TEXT("|{0}[{1}]"), { NestedPropertyName, PropertyElementIndex })) + PropertyPath;
+}
+
+void GetPropertyPath_ArrayHelper(
+	const FArrayProperty* ArrayProperty
+	, FString& PropertyPath
+	, int32 PropertyElementIndex = -1
+)
+{
+	if (PropertyElementIndex != -1)
 	{
-		if (Object)
-		{
-			//PropertyHandle.
-		}
+		PrependPropertyPath(PropertyPath, ArrayProperty, PropertyElementIndex);
+		PrependPropertyPath(PropertyPath, ArrayProperty, -1);
 	}
 }
 
-void APrefabActor::OnConstruction(const FTransform& Transform)
+/** Callback for object property modifications, called by UObject::PreEditChange with a full property chain */
+void APrefabActor::OnPreObjectPropertyChanged(UObject* ObjectBeingModified, const FEditPropertyChain& Chain)
 {
-	Super::OnConstruction(Transform);
-	FPropertyEditorModule& PropertyEditorModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
+	if (ObjectBeingModified == this)
+		return;
 
-	// TODO: Only support variable override if root component
-	TArray<UActorComponent*> ComponentsToSubscribeTo;
-	GetComponents(ComponentsToSubscribeTo);
-	TSet<TWeakObjectPtr<UObject>> Visited;
-	for (auto& Comp : ComponentsToSubscribeTo)
-	{
-		if (!Comp) 
-			continue;
-		if (Comp->IsA(UPrefabComponent::StaticClass()) || Comp->IsA(UBillboardComponent::StaticClass()))
-			continue;
-		Visited.Add(Comp);
-		TSharedPtr<IPropertyChangeListener> PropertyChangeListener = ActivePropertyChangeListeners.FindRef(Comp);
+	std::function<bool(AActor*)> ProcessActorFn;
+	std::function<bool(AActor*)> ForEachAttachedActorsFn;
+	bool bIsObjectBeingModifiedAttached = false;
+	TArray<FString> PathStack;
 
-		if (!PropertyChangeListener.IsValid())
+	ProcessActorFn = [
+		this
+			, &ProcessActorFn
+			, &ForEachAttachedActorsFn
+			, &bIsObjectBeingModifiedAttached
+			, &ObjectBeingModified
+			, &PathStack
+	](AActor* AttachedActor)
 		{
-			PropertyChangeListener = PropertyEditorModule.CreatePropertyChangeListener();
-			FPropertyListenerSettings Settings;
-			// Ignore array and object properties
-			Settings.bIgnoreArrayProperties = false;
-			Settings.bIgnoreObjectProperties = false;
-			// Property flags which must be on the property
-			Settings.RequiredPropertyFlags = 0;
-			// Property flags which cannot be on the property
-			Settings.DisallowedPropertyFlags = CPF_EditConst;
+			if (!AttachedActor)
+				return false;
 
-			PropertyChangeListener->SetObject(*Comp, Settings);
-			PropertyChangeListener->GetOnPropertyChangedDelegate().AddUObject(this, &APrefabActor::OnPropertyChanged);
+			PathStack.Add(AttachedActor->GetName());
+			EditObjectPath = FString::Join(PathStack, TEXT("/"));
+
+			TArray<UActorComponent*> Components;
+			AttachedActor->GetComponents(Components, false);
+			for (auto& Component : Components)
+			{
+				if (!Component) continue;
+				if (Component->IsA(UPrefabComponent::StaticClass()) || Component->IsA(UBillboardComponent::StaticClass()))
+					continue;
+				if (Component == ObjectBeingModified)
+				{
+					bIsObjectBeingModifiedAttached = true;
+					UE_LOG(LogTemp, Warning, TEXT("Path: %s"), *EditObjectPath);
+					return false;
+				}
+			}
+
+			if (AttachedActor == ObjectBeingModified)
+			{
+				bIsObjectBeingModifiedAttached = true;
+				UE_LOG(LogTemp, Warning, TEXT("Path: %s"), *EditObjectPath);
+				return false;
+			}
+
+			if (
+				// Recursively look if modified object is a child until next prefab
+				// Until then, we have jurisdiction
+				AttachedActor != this &&
+				AttachedActor->IsA(APrefabActor::StaticClass())
+				)
+			{
+				// Stop recursion here
+				return false;
+			}
+
+			return true;
+		};
+
+		ForEachAttachedActorsFn = [
+			this
+				, &ProcessActorFn
+				, &ForEachAttachedActorsFn
+				, &bIsObjectBeingModifiedAttached
+				, &ObjectBeingModified
+				, &PathStack
+		](AActor* AttachedActor)
+			{
+				if (!ProcessActorFn(AttachedActor))
+					return false;
+
+				AttachedActor->ForEachAttachedActors(ForEachAttachedActorsFn);
+				PathStack.RemoveAt(PathStack.Num() - 1);
+				return true;
+			};
+			if (ProcessActorFn(this))
+			{
+				ForEachAttachedActors(ForEachAttachedActorsFn);
+			}
+
+			if (bIsObjectBeingModifiedAttached)
+			{
+				FString PropertyPath = "";		
+				auto& NonConstChain = const_cast<FEditPropertyChain&>(Chain);
+				using PropNode = TDoubleLinkedList<FProperty*>::TDoubleLinkedListNode;
+				for (PropNode* Node = Chain.GetHead(); Node; Node = Node->GetNextNode())
+				{
+					auto Property = Node->GetValue();
+					EditPropertyChain.Add(Property);
+				}
+			}
+}
+
+void APrefabActor::OnObjectPropertyChanged(UObject* ObjectBeingModified, FPropertyChangedEvent& Event)
+{
+	if (EditPropertyChain.Num() != 0)
+	{
+		FString PropertyPath = "";
+		for (auto& Property : EditPropertyChain)
+		{
+			if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
+			{
+				int32 PropertyElementIndex = Event.GetArrayIndex(Property->GetName());
+				if (PropertyElementIndex != -1)
+				{
+					PrependPropertyPath(PropertyPath, ArrayProperty, PropertyElementIndex);
+				}
+			}
+
+			PrependPropertyPath(PropertyPath, Property);
+		}
+
+		FString CombinedPath = PropertyPath + PropertyPath;
+		if (!ChangeSet.Contains(CombinedPath))
+		{
+			if (auto PropertyChange = NewObject<UPrefabInstancePropertyChange>(this))
+			{
+				PropertyChange->ObjectPath = EditObjectPath;
+				PropertyChange->PropertyPath = PropertyPath;
+				ChangeSet.Add(CombinedPath, PropertyChange);
+				Changes.Add(PropertyChange);
+			}
 		}
 		
+		EditObjectPath = "";
+		EditPropertyChain.Empty();
 	}
-	TSet<TWeakObjectPtr<UObject>> OldComponents;
-	ActivePropertyChangeListeners.GetKeys(OldComponents);
-	for (auto& OldComponent : OldComponents)
-	{
-		if (
-			!OldComponent.IsValid() 
-			|| OldComponent.IsStale() 
-			|| OldComponent.IsExplicitlyNull()
-			|| !Visited.Contains(OldComponent)
-			)
-		{
-			ActivePropertyChangeListeners.Remove(OldComponent);
-		}
-	}
-	ActivePropertyChangeListeners.Compact();
 }
 
+//void APrefabActor::HandlePropertyChangedEvent(FPropertyChangedEvent& PropertyChangedEvent)
+//{
+//	// Handle property changed events with this function (called from our OnObjectPropertyChanged delegate) instead of overriding PostEditChangeProperty because replicated
+//	// multi-user transactions directly broadcast OnObjectPropertyChanged on the properties that were changed, instead of making PostEditChangeProperty events.
+//	// Note that UObject::PostEditChangeProperty ends up broadcasting OnObjectPropertyChanged anyway, so this works just the same as before.
+//	// see ConcertClientTransactionBridge.cpp, function ConcertClientTransactionBridgeUtil::ProcessTransactionEvent
+//}
 #endif // WITH_EDITOR
 
 void APrefabActor::LoadPrefab()
