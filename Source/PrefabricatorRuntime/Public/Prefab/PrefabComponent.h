@@ -20,6 +20,8 @@ public:
 
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& e) override;
+
+	virtual void OnAttachmentChanged() override;
 #endif // WITH_EDITOR
 	
 private:

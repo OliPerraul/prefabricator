@@ -8,6 +8,11 @@
 #include "Prefab/PrefabTools.h"
 #include "Utils/PrefabricatorStats.h"
 
+#include "IPropertyChangeListener.h"
+
+// Unsupported component (seem to be added by default), that's why this is causing issue
+#include "Components/BillboardComponent.h"
+
 #include "UObject/Package.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPrefabActor, Log, All);
@@ -98,6 +103,69 @@ FName APrefabActor::GetCustomIconName() const
 {
 	static const FName PrefabIconName("ClassIcon.PrefabActor");
 	return PrefabIconName;
+}
+
+void APrefabActor::OnPropertyChanged(const TArray<UObject*>& ChangedObjects, const IPropertyHandle& PropertyHandle)
+{
+	for (UObject* Object : ChangedObjects)
+	{
+		if (Object)
+		{
+			//PropertyHandle.
+		}
+	}
+}
+
+void APrefabActor::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+	FPropertyEditorModule& PropertyEditorModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
+
+	// TODO: Only support variable override if root component
+	TArray<UActorComponent*> ComponentsToSubscribeTo;
+	GetComponents(ComponentsToSubscribeTo);
+	TSet<TWeakObjectPtr<UObject>> Visited;
+	for (auto& Comp : ComponentsToSubscribeTo)
+	{
+		if (!Comp) 
+			continue;
+		if (Comp->IsA(UPrefabComponent::StaticClass()) || Comp->IsA(UBillboardComponent::StaticClass()))
+			continue;
+		Visited.Add(Comp);
+		TSharedPtr<IPropertyChangeListener> PropertyChangeListener = ActivePropertyChangeListeners.FindRef(Comp);
+
+		if (!PropertyChangeListener.IsValid())
+		{
+			PropertyChangeListener = PropertyEditorModule.CreatePropertyChangeListener();
+			FPropertyListenerSettings Settings;
+			// Ignore array and object properties
+			Settings.bIgnoreArrayProperties = false;
+			Settings.bIgnoreObjectProperties = false;
+			// Property flags which must be on the property
+			Settings.RequiredPropertyFlags = 0;
+			// Property flags which cannot be on the property
+			Settings.DisallowedPropertyFlags = CPF_EditConst;
+
+			PropertyChangeListener->SetObject(*Comp, Settings);
+			PropertyChangeListener->GetOnPropertyChangedDelegate().AddUObject(this, &APrefabActor::OnPropertyChanged);
+		}
+		
+	}
+	TSet<TWeakObjectPtr<UObject>> OldComponents;
+	ActivePropertyChangeListeners.GetKeys(OldComponents);
+	for (auto& OldComponent : OldComponents)
+	{
+		if (
+			!OldComponent.IsValid() 
+			|| OldComponent.IsStale() 
+			|| OldComponent.IsExplicitlyNull()
+			|| !Visited.Contains(OldComponent)
+			)
+		{
+			ActivePropertyChangeListeners.Remove(OldComponent);
+		}
+	}
+	ActivePropertyChangeListeners.Compact();
 }
 
 #endif // WITH_EDITOR

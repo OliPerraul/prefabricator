@@ -44,6 +44,13 @@ public:
 	void RandomizeSeed(const FRandomStream& InRandom, bool bRecursive = true);
 	void HandleBuildComplete();
 
+	void OnConstruction(const FTransform& Transform) override;
+
+	void OnPropertyChanged(const TArray<UObject*>& ChangedObjects, const IPropertyHandle& PropertyHandle);
+
+private:
+	TMap< TWeakObjectPtr<UObject>, TSharedPtr<class IPropertyChangeListener> > ActivePropertyChangeListeners;
+
 public:
 	// The last update ID of the prefab asset when this actor was refreshed from it
 	// This is used to test if the prefab has changed since we last recreated it

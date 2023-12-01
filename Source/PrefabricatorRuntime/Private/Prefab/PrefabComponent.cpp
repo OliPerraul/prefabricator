@@ -56,6 +56,11 @@ FBoxSphereBounds UPrefabComponent::CalcBounds(const FTransform& LocalToWorld) co
 
 
 #if WITH_EDITOR
+void UPrefabComponent::OnAttachmentChanged()
+{
+	Super::OnAttachmentChanged();
+}
+
 void UPrefabComponent::PostEditChangeProperty(struct FPropertyChangedEvent& e)
 {
 	Super::PostEditChangeProperty(e);
