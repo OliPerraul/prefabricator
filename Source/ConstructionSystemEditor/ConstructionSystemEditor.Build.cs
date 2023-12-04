@@ -9,6 +9,8 @@ namespace UnrealBuildTool.Rules
             bUseUnity = false;
             PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 			OptimizeCode = CodeOptimization.InShippingBuildsOnly;
+			ShadowVariableWarningLevel = WarningLevel.Off;
+			bWarningsAsErrors = false;		
 			PublicIncludePaths.AddRange(
 				new string[] {
 					// ... add public include paths required here ...

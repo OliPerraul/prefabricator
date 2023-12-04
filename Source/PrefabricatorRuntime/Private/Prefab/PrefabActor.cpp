@@ -30,8 +30,9 @@ APrefabActor::APrefabActor(const FObjectInitializer& ObjectInitializer)
 	PrefabComponent = ObjectInitializer.CreateDefaultSubobject<UPrefabComponent>(this, "PrefabComponent");
 	RootComponent = PrefabComponent;
 #if WITH_EDITOR
-	FCoreUObjectDelegates::OnObjectPropertyChanged.AddUObject(this, &APrefabActor::OnObjectPropertyChanged);
-	FCoreUObjectDelegates::OnPreObjectPropertyChanged.AddUObject(this, &APrefabActor::OnPreObjectPropertyChanged);
+#if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 4
+	FCoreUObjectDelegates::OnObjectPropertyChangedChain.AddUObject(this, &APrefabActor::OnObjectPropertyChangedChain);
+#endif
 #endif
 }
 
@@ -86,11 +87,53 @@ void APrefabActor::PostActorCreated()
 }
 
 #if WITH_EDITOR
-void APrefabActor::PostEditChangeProperty(struct FPropertyChangedEvent& e)
+void APrefabActor::PostEditChangeProperty(struct FPropertyChangedEvent& Event)
 {
-	Super::PostEditChangeProperty(e);
+	Super::PostEditChangeProperty(Event);
+}
 
+void APrefabActor::PostEditChangeChainProperty(struct FPropertyChangedChainEvent& Event)
+{
+	Super::PostEditChangeChainProperty(Event);
 
+	FName PropertyName = (Event.Property != NULL) ? Event.Property->GetFName() : NAME_None;
+
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(FPrefabInstancePropertyChange, bIsStaged))
+	{
+		if(auto PropertyNode = Event.PropertyChain.GetHead())
+		{
+			if (auto Property = PropertyNode->GetValue())
+			{
+				int32 PropertyElementIndex = Event.GetArrayIndex(Property->GetName());
+				if (PropertyElementIndex != -1)
+				{
+					FPrefabInstancePropertyChange Change;
+					if (Property->GetName() == GET_MEMBER_NAME_CHECKED(APrefabActor, UnstagedChanges))
+					{
+						if (UnstagedChanges[PropertyElementIndex].bIsStaged)
+						{
+							Change = UnstagedChanges[PropertyElementIndex];
+							StagedChanges.Add(Change);
+							UnstagedChanges.RemoveAt(PropertyElementIndex);
+						}
+					}
+					else if (Property->GetName() == GET_MEMBER_NAME_CHECKED(APrefabActor, StagedChanges))
+					{
+						if (!StagedChanges[PropertyElementIndex].bIsStaged)
+						{
+							Change = StagedChanges[PropertyElementIndex];
+							UnstagedChanges.Add(Change);
+							StagedChanges.RemoveAt(PropertyElementIndex);
+						}
+					}
+					if (auto cachedChange = ChangeSet.Find(Change))
+					{
+						cachedChange->bIsStaged = Change.bIsStaged;
+					}
+				}
+			}
+		}
+	}
 }
 
 void APrefabActor::PostDuplicate(EDuplicateMode::Type DuplicateMode)
@@ -124,122 +167,111 @@ void PrependPropertyPath(FString& PropertyPath, const FProperty* Property, int32
 		FString::Format(TEXT("|{0}[{1}]"), { NestedPropertyName, PropertyElementIndex })) + PropertyPath;
 }
 
-void GetPropertyPath_ArrayHelper(
-	const FArrayProperty* ArrayProperty
-	, FString& PropertyPath
-	, int32 PropertyElementIndex = -1
-)
-{
-	if (PropertyElementIndex != -1)
-	{
-		PrependPropertyPath(PropertyPath, ArrayProperty, PropertyElementIndex);
-		PrependPropertyPath(PropertyPath, ArrayProperty, -1);
-	}
-}
-
 /** Callback for object property modifications, called by UObject::PreEditChange with a full property chain */
-void APrefabActor::OnPreObjectPropertyChanged(UObject* ObjectBeingModified, const FEditPropertyChain& Chain)
+void APrefabActor::OnObjectPropertyChangedChain(UObject* ObjectBeingModified, FPropertyChangedChainEvent& Event)
 {
-	if (ObjectBeingModified == this)
-		return;
+    if (ObjectBeingModified == this)
+        return;
 
-	std::function<bool(AActor*)> ProcessActorFn;
-	std::function<bool(AActor*)> ForEachAttachedActorsFn;
-	bool bIsObjectBeingModifiedAttached = false;
-	TArray<FString> PathStack;
+    std::function<bool(AActor*)> ProcessActorFn;
+    std::function<bool(AActor*)> ForEachAttachedActorsFn;
+    bool bIsObjectBeingModifiedAttached = false;
+    TArray<FString> PathStack;
 
-	ProcessActorFn = [
-		this
-			, &ProcessActorFn
-			, &ForEachAttachedActorsFn
-			, &bIsObjectBeingModifiedAttached
-			, &ObjectBeingModified
-			, &PathStack
-	](AActor* AttachedActor)
-		{
-			if (!AttachedActor)
-				return false;
-
-			PathStack.Add(AttachedActor->GetName());
-			EditObjectPath = FString::Join(PathStack, TEXT("/"));
-
-			TArray<UActorComponent*> Components;
-			AttachedActor->GetComponents(Components, false);
-			for (auto& Component : Components)
-			{
-				if (!Component) continue;
-				if (Component->IsA(UPrefabComponent::StaticClass()) || Component->IsA(UBillboardComponent::StaticClass()))
-					continue;
-				if (Component == ObjectBeingModified)
-				{
-					bIsObjectBeingModifiedAttached = true;
-					UE_LOG(LogTemp, Warning, TEXT("Path: %s"), *EditObjectPath);
-					return false;
-				}
-			}
-
-			if (AttachedActor == ObjectBeingModified)
-			{
-				bIsObjectBeingModifiedAttached = true;
-				UE_LOG(LogTemp, Warning, TEXT("Path: %s"), *EditObjectPath);
-				return false;
-			}
-
-			if (
-				// Recursively look if modified object is a child until next prefab
-				// Until then, we have jurisdiction
-				AttachedActor != this &&
-				AttachedActor->IsA(APrefabActor::StaticClass())
-				)
-			{
-				// Stop recursion here
-				return false;
-			}
-
-			return true;
-		};
-
-		ForEachAttachedActorsFn = [
-			this
-				, &ProcessActorFn
-				, &ForEachAttachedActorsFn
-				, &bIsObjectBeingModifiedAttached
-				, &ObjectBeingModified
-				, &PathStack
+    FString EditObjectPath = "";
+    ProcessActorFn = [
+        this
+		, &ProcessActorFn
+		, &ForEachAttachedActorsFn
+		, &bIsObjectBeingModifiedAttached
+		, &ObjectBeingModified
+		, &EditObjectPath
+		, &PathStack
 		](AActor* AttachedActor)
-			{
-				if (!ProcessActorFn(AttachedActor))
-					return false;
+        {
+        if (!AttachedActor)
+            return false;
 
-				AttachedActor->ForEachAttachedActors(ForEachAttachedActorsFn);
-				PathStack.RemoveAt(PathStack.Num() - 1);
-				return true;
-			};
-			if (ProcessActorFn(this))
-			{
-				ForEachAttachedActors(ForEachAttachedActorsFn);
-			}
+        PathStack.Add(AttachedActor->GetName());
+        EditObjectPath = FString::Join(PathStack, TEXT("/"));
 
-			if (bIsObjectBeingModifiedAttached)
-			{
-				FString PropertyPath = "";		
-				auto& NonConstChain = const_cast<FEditPropertyChain&>(Chain);
-				using PropNode = TDoubleLinkedList<FProperty*>::TDoubleLinkedListNode;
-				for (PropNode* Node = Chain.GetHead(); Node; Node = Node->GetNextNode())
-				{
-					auto Property = Node->GetValue();
-					EditPropertyChain.Add(Property);
-				}
-			}
-}
+        TArray<UActorComponent*> Components;
+        AttachedActor->GetComponents(Components, false);
+        for (auto& Component : Components)
+        {
+            if (!Component) continue;
+            if (Component->IsA(UPrefabComponent::StaticClass()) || Component->IsA(UBillboardComponent::StaticClass()))
+                continue;
+            if (Component == ObjectBeingModified)
+            {
+                bIsObjectBeingModifiedAttached = true;
+                UE_LOG(LogTemp, Warning, TEXT("Path: %s"), *EditObjectPath);
+                return false;
+            }
+        }
 
-void APrefabActor::OnObjectPropertyChanged(UObject* ObjectBeingModified, FPropertyChangedEvent& Event)
-{
+        if (AttachedActor == ObjectBeingModified)
+        {
+            bIsObjectBeingModifiedAttached = true;
+            UE_LOG(LogTemp, Warning, TEXT("Path: %s"), *EditObjectPath);
+            return false;
+        }
+
+        if (
+            // Recursively look if modified object is a child until next prefab
+            // Until then, we have jurisdiction
+            AttachedActor != this &&
+            AttachedActor->IsA(APrefabActor::StaticClass())
+            )
+        {
+            // Stop recursion here
+            return false;
+        }
+
+        return true;
+    };
+
+    ForEachAttachedActorsFn = [
+    this
+    , &ProcessActorFn
+    , &ForEachAttachedActorsFn
+    , &bIsObjectBeingModifiedAttached
+    , &ObjectBeingModified
+    , &PathStack
+    ](AActor* AttachedActor)
+    {
+        if (!ProcessActorFn(AttachedActor))
+            return false;
+
+        AttachedActor->ForEachAttachedActors(ForEachAttachedActorsFn);
+        PathStack.RemoveAt(PathStack.Num() - 1);
+        return true;
+    };
+
+    if (ProcessActorFn(this))
+    {
+        ForEachAttachedActors(ForEachAttachedActorsFn);
+    }
+
+    if (!bIsObjectBeingModifiedAttached)
+        return;
+
+    FString PropertyPath = "";
+    TArray<FProperty*> EditPropertyChain;
+    auto& NonConstChain = const_cast<FEditPropertyChain&>(Event.PropertyChain);
+    using PropNode = TDoubleLinkedList<FProperty*>::TDoubleLinkedListNode;
+    for (PropNode* Node = NonConstChain.GetHead(); Node; Node = Node->GetNextNode())
+    {
+        auto Property = Node->GetValue();
+        EditPropertyChain.Add(Property);
+    }
+
 	if (EditPropertyChain.Num() != 0)
 	{
 		FString PropertyPath = "";
-		for (auto& Property : EditPropertyChain)
+		for (auto it = EditPropertyChain.rbegin(); it != EditPropertyChain.rend(); ++it)
 		{
+			auto& Property = *it;
 			if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
 			{
 				int32 PropertyElementIndex = Event.GetArrayIndex(Property->GetName());
@@ -248,34 +280,31 @@ void APrefabActor::OnObjectPropertyChanged(UObject* ObjectBeingModified, FProper
 					PrependPropertyPath(PropertyPath, ArrayProperty, PropertyElementIndex);
 				}
 			}
-
-			PrependPropertyPath(PropertyPath, Property);
-		}
-
-		FString CombinedPath = PropertyPath + PropertyPath;
-		if (!ChangeSet.Contains(CombinedPath))
-		{
-			if (auto PropertyChange = NewObject<UPrefabInstancePropertyChange>(this))
+			else
 			{
-				PropertyChange->ObjectPath = EditObjectPath;
-				PropertyChange->PropertyPath = PropertyPath;
-				ChangeSet.Add(CombinedPath, PropertyChange);
-				Changes.Add(PropertyChange);
+				PrependPropertyPath(PropertyPath, Property);
 			}
 		}
-		
-		EditObjectPath = "";
-		EditPropertyChain.Empty();
+
+		TSoftObjectPtr ObjectBeingModifiedPtr(ObjectBeingModified);
+		FPrefabInstancePropertyChange Key(ObjectBeingModifiedPtr, PropertyPath);
+		if (!ChangeSet.Contains(Key))
+		{			
+			UnstagedChanges.Emplace(Key);
+			ChangeSet.Add(Key);
+		}
+	}
+
+	for (auto& change : UnstagedChanges)
+	{
+		change.UpdateDisplayName();
+	}
+	for (auto& change : StagedChanges)
+	{
+		change.UpdateDisplayName();
 	}
 }
 
-//void APrefabActor::HandlePropertyChangedEvent(FPropertyChangedEvent& PropertyChangedEvent)
-//{
-//	// Handle property changed events with this function (called from our OnObjectPropertyChanged delegate) instead of overriding PostEditChangeProperty because replicated
-//	// multi-user transactions directly broadcast OnObjectPropertyChanged on the properties that were changed, instead of making PostEditChangeProperty events.
-//	// Note that UObject::PostEditChangeProperty ends up broadcasting OnObjectPropertyChanged anyway, so this works just the same as before.
-//	// see ConcertClientTransactionBridge.cpp, function ConcertClientTransactionBridgeUtil::ProcessTransactionEvent
-//}
 #endif // WITH_EDITOR
 
 void APrefabActor::LoadPrefab()

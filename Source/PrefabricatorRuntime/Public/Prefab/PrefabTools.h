@@ -49,6 +49,7 @@ class FPrefabActorLookup {
 public:
 	void Register(const FString& InActorPath, const FGuid& InPrefabItemId);
 	void Register(AActor* InActor, const FGuid& InPrefabItemId);
+	void Register(UActorComponent* InComp, const FGuid& InPrefabItemId);
 	bool GetPrefabItemId(const FString& InObjectPath, FGuid& OutCrossRefPrefabItem) const;
 
 private:

@@ -9,7 +9,9 @@ namespace UnrealBuildTool.Rules
             bUseUnity = false;
             PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 			OptimizeCode = CodeOptimization.InShippingBuildsOnly;
-            PublicIncludePaths.AddRange(
+			ShadowVariableWarningLevel = WarningLevel.Off;
+			bWarningsAsErrors = false;
+			PublicIncludePaths.AddRange(
 				new string[] {
 					// ... add public include paths required here ...
 				}
@@ -34,6 +36,10 @@ namespace UnrealBuildTool.Rules
 					// ... add private dependencies that you statically link with here ...
 				}
 				);
+			if(Target.bBuildEditor)
+			{
+				PrivateDependencyModuleNames.Add("UnrealEd");
+			}
 
 			DynamicallyLoadedModuleNames.AddRange(
 				new string[]

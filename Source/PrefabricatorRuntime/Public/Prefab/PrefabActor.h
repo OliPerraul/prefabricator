@@ -4,26 +4,69 @@
 #include "CoreMinimal.h"
 #include "Engine/AssetUserData.h"
 #include "GameFramework/Actor.h"
+
+#include "Templates/Tuple.h"
+
 #include "PrefabActor.generated.h"
 
 class UPrefabricatorAsset;
 class IPropertyHandle;
 
-UCLASS(BlueprintType, EditInlineNew, CollapseCategories)
-class PREFABRICATORRUNTIME_API UPrefabInstancePropertyChange : public UObject
+USTRUCT(BlueprintType)
+struct PREFABRICATORRUNTIME_API FPrefabInstancePropertyChange
 {
 	GENERATED_BODY()
-public:
+
 	UPROPERTY(VisibleAnywhere)
-	FString ObjectPath = "";
+	TSoftObjectPtr<UObject> Object;
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY(VisibleAnywhere, meta=(EditCondition=false, EditConditionHides))
+	FString ObjectDisplayName;
+#endif
 
 	UPROPERTY(VisibleAnywhere)
 	FString PropertyPath = "";
 
 	UPROPERTY(EditAnywhere)
-	bool bStaged = false;
+	bool bIsStaged = false;
+
+	FPrefabInstancePropertyChange()
+	{
+	}
+
+#if WITH_EDITOR
+	void UpdateDisplayName()
+	{
+		if (Object)
+		{
+			ObjectDisplayName =
+				Object->IsA(AActor::StaticClass()) ?
+				Cast<AActor>(Object.Get())->GetActorLabel() :
+				Object->GetName();
+		}
+	}
+#endif
+
+	FPrefabInstancePropertyChange(TSoftObjectPtr<UObject> Object, FString PropertyPath)
+		: Object(Object)
+		, PropertyPath(PropertyPath)
+	{
+		UpdateDisplayName();
+	}
+
+	// Define the == operator so Unreal can compare two keys for equality.
+	bool operator==(const FPrefabInstancePropertyChange& Other) const
+	{
+		return Object == Other.Object && PropertyPath == Other.PropertyPath;
+	}
 
 };
+
+FORCEINLINE uint32 GetTypeHash(const FPrefabInstancePropertyChange& Key)
+{
+	return HashCombine(GetTypeHash(Key.Object), GetTypeHash(Key.PropertyPath));
+}
 
 UCLASS(Blueprintable, ConversionRoot, ComponentWrapperClass)
 class PREFABRICATORRUNTIME_API APrefabActor : public AActor {
@@ -33,8 +76,14 @@ public:
 	class UPrefabComponent* PrefabComponent;
 
 public:
-	UPROPERTY(EditAnywhere, Instanced, Category = "Prefabricator", Meta=(TitleProperty="{ObjectPath}:{PropertyPath}"))
-	TArray<TObjectPtr<UPrefabInstancePropertyChange>> Changes;
+	UPROPERTY(EditAnywhere, Category = "Prefabricator", Meta=(TitleProperty="{ObjectDisplayName}{PropertyPath}"))
+	TArray<FPrefabInstancePropertyChange> UnstagedChanges;
+
+	UPROPERTY(EditAnywhere, Category = "Prefabricator", Meta = (TitleProperty = "{ObjectDisplayName}{PropertyPath}"))
+	TArray<FPrefabInstancePropertyChange> StagedChanges;
+
+	UPROPERTY()
+	TSet<FPrefabInstancePropertyChange> ChangeSet;
 
 	/// AActor Interface 
 	virtual void Destroyed() override;
@@ -42,9 +91,9 @@ public:
 	virtual void PostActorCreated() override;
 
 #if WITH_EDITOR
-	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& e) override;
-	void OnObjectPropertyChanged(UObject* ObjectBeingModified, FPropertyChangedEvent& PropertyChangedEvent);
-	void OnPreObjectPropertyChanged(UObject*, const class FEditPropertyChain&);
+	virtual void PostEditChangeProperty(struct FPropertyChangedEvent&) override;
+	virtual void PostEditChangeChainProperty(struct FPropertyChangedChainEvent&) override;
+	void OnObjectPropertyChangedChain(UObject*, struct FPropertyChangedChainEvent&);
 
 	//void HandlePropertyChangedEvent(FPropertyChangedEvent& PropertyChangedEvent);
 
@@ -68,14 +117,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Prefabricator")
 	void RandomizeSeed(const FRandomStream& InRandom, bool bRecursive = true);
 	void HandleBuildComplete();
-
-private:
-	UPROPERTY(EditAnywhere, Category = "Prefabricator", meta=(AllowPrivateAccess = true))
-	TMap<FString, TObjectPtr<UPrefabInstancePropertyChange>> ChangeSet;
-
-	FString EditObjectPath;
-
-	TArray<FProperty*> EditPropertyChain;
 
 public:
 	// The last update ID of the prefab asset when this actor was refreshed from it
