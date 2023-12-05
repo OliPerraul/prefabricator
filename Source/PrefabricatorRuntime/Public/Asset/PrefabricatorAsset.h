@@ -38,6 +38,12 @@ struct PREFABRICATORRUNTIME_API FPrefabricatorNestedPropertyData
 	UPROPERTY()
 	FGuid CrossReferencePrefabActorId;
 
+	UPROPERTY()
+	FString ExportedValue;
+
+	UPROPERTY()
+	TArray<FPrefabricatorPropertyAssetMapping> AssetSoftReferenceMappings;
+
 	//UPROPERTY()
 	//bool bShouldSkipSerialization = false;
 };
@@ -69,6 +75,9 @@ public:
 
 	void SaveReferencedAssetValues();
 	void LoadReferencedAssetValues();
+
+	private:
+	bool LoadReferencedAssetValues(FPrefabricatorPropertyAssetMapping& Mapping, FString& OutExportedValue);
 };
 
 USTRUCT()

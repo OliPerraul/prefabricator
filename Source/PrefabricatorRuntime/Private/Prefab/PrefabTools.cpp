@@ -475,7 +475,6 @@ namespace {
 
 	void _RestoreForPartialSerialization(
 		FRestorePartialSerializationContext& Context
-		, const FRestorePartialSerializationPtrs& ContainerPtrs
 		, const FRestorePartialSerializationPtrs& ValuePtrs
 		, FProperty* Property
 		, const FString& PropertyPath
@@ -483,14 +482,14 @@ namespace {
 
 	void _RestoreForPartialSerialization_ArrayHelper(
 		FRestorePartialSerializationContext& Context
-		, const FRestorePartialSerializationPtrs& ContainerPtr
+		, const FRestorePartialSerializationPtrs& ValuePtrs
 		, const FArrayProperty* ArrayProperty
 		, const FString& PropertyPath
 	)
 	{
 		auto InnerProperty = ArrayProperty->Inner;
-		FScriptArrayHelper_InContainer SrcHelper(ArrayProperty, ContainerPtr.Src);
-		FScriptArrayHelper_InContainer DestHelper(ArrayProperty, ContainerPtr.Dest);
+		FScriptArrayHelper SrcHelper(ArrayProperty, ValuePtrs.Src);
+		FScriptArrayHelper DestHelper(ArrayProperty, ValuePtrs.Dest);
 
 		TSoftObjectPtr<UObject> ObjectToSerializeSoftPtr(Context.ObjToDeserialize);
 		for (int32 Index = 0; Index < SrcHelper.Num(); Index++)
@@ -509,7 +508,7 @@ namespace {
 			FRestorePartialSerializationPtrs ValuePtrs;
 			ValuePtrs.Src = SrcHelper.GetRawPtr(Index);
 			ValuePtrs.Dest = DestHelper.GetRawPtr(Index);
-			_RestoreForPartialSerialization(Context, ContainerPtr, ValuePtrs, InnerProperty, PropertyPath, Index);
+			_RestoreForPartialSerialization(Context, ValuePtrs, InnerProperty, PropertyPath, Index);
 		}
 	}
 
@@ -523,10 +522,10 @@ namespace {
 		for (TFieldIterator<FProperty> It(StructProperty->Struct); It; ++It) {
 			if (FProperty* InnerProperty = *It)
 			{
-				FRestorePartialSerializationPtrs ItemPtrs;
-				ItemPtrs.Src = InnerProperty->ContainerPtrToValuePtr<void>(ContainerPtrs.Src, 0);
-				ItemPtrs.Dest = InnerProperty->ContainerPtrToValuePtr<void>(ContainerPtrs.Dest, 0);
-				_RestoreForPartialSerialization(Context, ContainerPtrs, ItemPtrs, InnerProperty, PropertyPath);
+				FRestorePartialSerializationPtrs ValuePtrs;
+				ValuePtrs.Src = InnerProperty->ContainerPtrToValuePtr<void>(ContainerPtrs.Src, 0);
+				ValuePtrs.Dest = InnerProperty->ContainerPtrToValuePtr<void>(ContainerPtrs.Dest, 0);
+				_RestoreForPartialSerialization(Context, ValuePtrs, InnerProperty, PropertyPath);
 			}
 		}
 	}
@@ -535,7 +534,6 @@ namespace {
 	// while preserving per prefab changes
 	void _RestoreForPartialSerialization(
 		FRestorePartialSerializationContext& Context
-		, const FRestorePartialSerializationPtrs& ContainerPtr
 		, const FRestorePartialSerializationPtrs& ValuePtr
 		, FProperty* Property
 		, const FString& PropertyPath
@@ -558,7 +556,7 @@ namespace {
 		// Support for TArrays (TODO: Adds support for sets and maps).
 		else if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
 		{
-			_RestoreForPartialSerialization_ArrayHelper(Context, ContainerPtr, ArrayProperty, NewPropertyPath);
+			_RestoreForPartialSerialization_ArrayHelper(Context, ValuePtr, ArrayProperty, NewPropertyPath);
 		}
 	}
 
@@ -566,15 +564,11 @@ namespace {
 		FRestorePartialSerializationContext& Context
 		, FProperty* Property)
 	{
-		FRestorePartialSerializationPtrs ContainerPtrs;
-		ContainerPtrs.Src = nullptr;
-		ContainerPtrs.Dest = Context.ObjToDeserialize;
-
 		FRestorePartialSerializationPtrs ValuePtrs;
 		ValuePtrs.Src = Context.BackupValuePtr;
-		ValuePtrs.Dest = Property->ContainerPtrToValuePtr<void>(ContainerPtrs.Dest, 0);
+		ValuePtrs.Dest = Property->ContainerPtrToValuePtr<void>(Context.ObjToDeserialize, 0);
 
-		_RestoreForPartialSerialization(Context, ContainerPtrs, ValuePtrs, Property, "");
+		_RestoreForPartialSerialization(Context, ValuePtrs, Property, "");
 	}
 
 	template<typename T>
@@ -661,7 +655,7 @@ namespace {
 		}
 	}
 
-	struct FPreprocessSerializePropertyContext
+	struct FSerializePropertyContext
 	{
 		APrefabActor* PrefabActor = nullptr;
 		UObject* ObjToSerialize = nullptr;
@@ -669,9 +663,19 @@ namespace {
 		UPrefabricatorProperty* PrefabProperty = nullptr;
 	};
 
+	FPrefabricatorNestedPropertyData* GetNestedPropertyData(FSerializePropertyContext& Context, FString PropertyPath)
+	{
+		FPrefabricatorNestedPropertyData* NestedPropertyData = Context.PrefabProperty->NestedPropertyData.Find(PropertyPath);
+		if (!NestedPropertyData)
+		{
+			NestedPropertyData = &Context.PrefabProperty->NestedPropertyData.Add(PropertyPath, FPrefabricatorNestedPropertyData());
+		}
+		return NestedPropertyData;
+	}
+
 	// SerializeObjectProperty method to reuse the code.
-	bool _PreprocessSerializeProperty_ObjectHelper(
-		FPreprocessSerializePropertyContext& Context
+	bool _SerializeProperty_ObjectHelper(
+		FSerializePropertyContext& Context
 		, const void* ValuePtr
 		, const FObjectPropertyBase* ObjProperty
 		, const FString& PropertyPath
@@ -704,18 +708,17 @@ namespace {
 		return false;
 	}
 
-	void _PreprocessSerializeProperty(
-		FPreprocessSerializePropertyContext& Context
-		, void* ContainerPtr
+	void _SerializeProperty(
+		FSerializePropertyContext& Context
 		, void* ValuePtr
 		, const FProperty* Property
 		, const FString& PropertyPath
 		, int32 PropertyElementIndex = -1
 	);
 
-	void _PreprocessSerializeProperty_ArrayHelper(
-		FPreprocessSerializePropertyContext& Context
-		, void* ContainerPtr
+	void _SerializeProperty_ArrayHelper(
+		FSerializePropertyContext& Context
+		, void* ArrayPtr
 		, const FArrayProperty* ArrayProperty
 		, const FString& PropertyPath
 		, int32 PropertyElementIndex=-1	
@@ -723,7 +726,7 @@ namespace {
 	{		
 		auto InnerProperty = ArrayProperty->Inner;
 
-		FScriptArrayHelper_InContainer Helper(ArrayProperty, ContainerPtr);
+		FScriptArrayHelper Helper(ArrayProperty, ArrayPtr);
 		FPrefabricatorNestedPropertyData* NestedPropertyData = Context.PrefabProperty->NestedPropertyData.Find(PropertyPath);
 		if (!NestedPropertyData)
 		{
@@ -734,13 +737,13 @@ namespace {
 		for (int32 Index = 0; Index < Helper.Num(); Index++)
 		{
 			void* ValuePtr = Helper.GetRawPtr(Index);
-			_PreprocessSerializeProperty(Context, ContainerPtr, ValuePtr, InnerProperty, PropertyPath, Index);
+			_SerializeProperty(Context, ValuePtr, InnerProperty, PropertyPath, Index);
 		}
 	}
 
-	void _PreprocessSerializeProperty_StructHelper(
-		FPreprocessSerializePropertyContext& Context
-		, void* ContainerPtr
+	void _SerializeProperty_StructHelper(
+		FSerializePropertyContext& Context
+		, void* StructPtr
 		, const FStructProperty* StructProperty
 		, const FString& PropertyPath
 		, int32 PropertyElementIndex=-1
@@ -751,15 +754,14 @@ namespace {
 		for (TFieldIterator<FProperty> It(StructProperty->Struct); It; ++It) {
 			if (FProperty* InnerProperty = *It)
 			{
-				void* ValuePtr = InnerProperty->ContainerPtrToValuePtr<void>(ContainerPtr, 0);
-				_PreprocessSerializeProperty(Context, ContainerPtr, ValuePtr, InnerProperty, PropertyPath);
+				void* ValuePtr = InnerProperty->ContainerPtrToValuePtr<void>(StructPtr, 0);
+				_SerializeProperty(Context, ValuePtr, InnerProperty, PropertyPath);
 			}
 		}
 	}
 
-	void _PreprocessSerializeProperty(
-		FPreprocessSerializePropertyContext& Context
-		, void* ContainerPtr
+	void _SerializeProperty(
+		FSerializePropertyContext& Context
 		, void* ValuePtr
 		, const FProperty* Property
 		, const FString& PropertyPath
@@ -782,36 +784,30 @@ namespace {
 			{
 				return;
 			}
-		}		
+		}
 
 		// Support for USTRUCT
 		if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property)) {
-			_PreprocessSerializeProperty_StructHelper(Context, ValuePtr, StructProperty, NewPropertyPath);
+			_SerializeProperty_StructHelper(Context, ValuePtr, StructProperty, NewPropertyPath);
 		}
 		// Support for TArrays (TODO: Adds support for sets and maps).
 		else if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
 		{
-			_PreprocessSerializeProperty_ArrayHelper(Context, ContainerPtr, ArrayProperty, NewPropertyPath);
+			_SerializeProperty_ArrayHelper(Context, ValuePtr, ArrayProperty, NewPropertyPath);
 		}
 		// FObjectPropertyBase instead of FObjectProperty to also support soft references.
 		else if (const FObjectPropertyBase* ObjProperty = CastField<FObjectPropertyBase>(Property)) {
-			_PreprocessSerializeProperty_ObjectHelper(Context, ValuePtr, ObjProperty, NewPropertyPath);
+			_SerializeProperty_ObjectHelper(Context, ValuePtr, ObjProperty, NewPropertyPath);
 		}
 	}
 
-	void PreprocessSerializeProperty(
-		FPreprocessSerializePropertyContext& Context
+	void SerializeProperty(
+		FSerializePropertyContext& Context
 		, const FProperty* Property
 	)
-	{
-		void* ValuePtr = nullptr;
-		// Special case for Object and Struct property where we imediately want to know their address (ValuePtr)
-		// Proprocessing the array property only requires the container ptr.
-		if (CastField<FStructProperty>(Property) || CastField<FObjectPropertyBase>(Property))
-		{
-			ValuePtr = Property->ContainerPtrToValuePtr<void>(Context.ObjToSerialize, 0);
-		}
-		_PreprocessSerializeProperty(Context, Context.ObjToSerialize, ValuePtr, Property, "");
+	{		
+		void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Context.ObjToSerialize, 0);
+		_SerializeProperty(Context, ValuePtr, Property, "");
 	}
 
 	void SerializeFields(UObject* ObjToSerialize, UObject* ObjTemplate, APrefabActor* PrefabActor, const FPrefabActorLookup& CrossReferences, TArray<UPrefabricatorProperty*>& OutProperties) {
@@ -872,16 +868,16 @@ namespace {
 			PrefabProperty = NewObject<UPrefabricatorProperty>(PrefabAsset);
 			PrefabProperty->PropertyName = PropertyName;
 
-			FPreprocessSerializePropertyContext Context{ PrefabActor, ObjToSerialize, CrossReferences, PrefabProperty };
-			PreprocessSerializeProperty(Context, Property);
+			FSerializePropertyContext Context{ PrefabActor, ObjToSerialize, CrossReferences, PrefabProperty };
+			SerializeProperty(Context, Property);
 
-			// Save as usual even if cross reference was found
-			// This is is to support fields present in a struct which have nothing to do with objects
-			if (!PrefabProperty->bIsCrossReferencedActor || PrefabProperty->bContainsStructProperty)
+			// Root export value only supported for this property for legacy reasons.
+			//!PrefabProperty->bIsCrossReferencedActor || PrefabProperty->bContainsStructProperty)
+			if (PrefabProperty->PropertyName == "PrefabAssetInterface")
 			{
 				GetPropertyData(Property, ObjToSerialize, ObjTemplate, PrefabProperty->ExportedValue);
-				PrefabProperty->SaveReferencedAssetValues();
 			}
+			PrefabProperty->SaveReferencedAssetValues();
 
 			OutProperties.Add(PrefabProperty);
 		}
@@ -903,10 +899,11 @@ namespace {
 		}
 	}
 
+	// TODO: THIS IS BROKEN
 	void DumpSerializedProperties(const TArray<UPrefabricatorProperty*>& InProperties) {
-		for (UPrefabricatorProperty* Property : InProperties) {
-			UE_LOG(LogPrefabTools, Log, TEXT("%s: %s"), *Property->PropertyName, *Property->ExportedValue);
-		}
+		// for (UPrefabricatorProperty* Property : InProperties) {
+		// 	UE_LOG(LogPrefabTools, Log, TEXT("%s: %s"), *Property->PropertyName, *Property->ExportedValue);
+		// }
 
 	}
 
@@ -1053,7 +1050,7 @@ void FPrefabTools::LoadComponentState(UActorComponent* InComp, const FPrefabrica
 		}
 	}		
 
-	InComp->PostLoad();
+	//InComp->PostLoad();
 
 	if (Service.IsValid()) {
 		SCOPE_CYCLE_COUNTER(STAT_LoadActorState_EndTransaction);
@@ -1136,7 +1133,7 @@ void FPrefabTools::LoadActorState(AActor* InActor, const FPrefabricatorActorData
 	}
 #endif // WITH_EDITOR
 
-	InActor->PostLoad();
+	//InActor->PostLoad();
 	InActor->ReregisterAllComponents();
 
 	if (Service.IsValid()) {
@@ -1260,7 +1257,6 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 	GetActorChildren(PrefabActor, ExistingActorPool);	
 
 	FPrefabInstanceTemplates* LoadState = FGlobalPrefabInstanceTemplates::Get();
-	TSharedPtr<IPrefabricatorService> Service = FPrefabricatorService::Get();
 
 	bool bPrefabOutOfDate = PrefabActor->LastUpdateID != PrefabAsset->LastUpdateID;
 
@@ -1315,61 +1311,64 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 		}
 	}
 
-	if (Service.IsValid()) {
-		UWorld* World = PrefabActor->GetWorld();
-		TMap<FGuid, AActor*> PrefabItemToActorMap;
-		TMap<FGuid, UActorComponent*> PrefabItemToComponentMap;
+	// PostLoad after internal object references have been resolved
+	TArray<UObject*> PostLoadObjects;
+	TMap<FGuid, UActorComponent*> PrefabItemToComponentMap;
 
-		// Prefab component support
-		for (FPrefabricatorComponentData& CompItemData : PrefabAsset->ComponentData) {
-			if (!CompItemData.ClassPathRef.IsValid()) {
-				CompItemData.ClassPathRef = CompItemData.ClassPath;
-			}
+	// Prefab component support
+	for (FPrefabricatorComponentData& CompItemData : PrefabAsset->ComponentData) {
+		if (!CompItemData.ClassPathRef.IsValid()) {
+			CompItemData.ClassPathRef = CompItemData.ClassPath;
+		}
 
-			if (CompItemData.ClassPathRef.GetAssetPathString() != CompItemData.ClassPath) {
-				CompItemData.ClassPath = CompItemData.ClassPathRef.GetAssetPathString();
-			}
+		if (CompItemData.ClassPathRef.GetAssetPathString() != CompItemData.ClassPath) {
+			CompItemData.ClassPath = CompItemData.ClassPathRef.GetAssetPathString();
+		}
 
-			UClass* CompClass = LoadObject<UClass>(nullptr, *CompItemData.ClassPathRef.GetAssetPathString());
-			if (!CompClass) continue;
+		UClass* CompClass = LoadObject<UClass>(nullptr, *CompItemData.ClassPathRef.GetAssetPathString());
+		if (!CompClass) continue;
 
-			UActorComponent* Comp = nullptr;
-			if (!bPrefabOutOfDate) {
-				// The prefab is not out of date. try to reuse an existing component
-				Comp = ReusableCompByItemID.FindRef(CompItemData.PrefabItemID);
-				if (Comp) {
-					FString ExistingClassName = Comp->GetClass()->GetPathName();
-					FString RequiredClassName = CompItemData.ClassPathRef.GetAssetPathString();
-					if (ExistingClassName == RequiredClassName) {
-						// We can reuse this component
-						ReusableCompByItemID.Remove(CompItemData.PrefabItemID);
-					}
-					else {
-						Comp = nullptr;
-					}					
+		UActorComponent* Comp = nullptr;
+		if (!bPrefabOutOfDate) {
+			// The prefab is not out of date. try to reuse an existing component
+			Comp = ReusableCompByItemID.FindRef(CompItemData.PrefabItemID);
+			if (Comp) {
+				FString ExistingClassName = Comp->GetClass()->GetPathName();
+				FString RequiredClassName = CompItemData.ClassPathRef.GetAssetPathString();
+				if (ExistingClassName == RequiredClassName) {
+					// We can reuse this component
+					ReusableCompByItemID.Remove(CompItemData.PrefabItemID);
 				}
-			}
-
-			if (!Comp) {
-				// Create a new child actor.  Try to create it from an existing template actor that is already preset in the scene
-
-				Comp = PrefabActor->AddComponentByClass(CompClass, false, CompItemData.RelativeTransform, false);
-				if (Comp->GetName() != CompItemData.ComponentName) {
-					Comp->Rename(*CompItemData.ComponentName);
-				}
-				// Load the prefab properties in
-				LoadComponentState(Comp, CompItemData, InSettings);
-			}
-
-			AssignAssetUserData(Comp, CompItemData.PrefabItemID, PrefabActor);
-
-			{
-				UActorComponent*& CompRef = PrefabItemToComponentMap.FindOrAdd(CompItemData.PrefabItemID);
-				CompRef = Comp;
+				else {
+					Comp = nullptr;
+				}					
 			}
 		}
 
-		// Actor component support
+		if (!Comp) {
+			// Create a new child actor.  Try to create it from an existing template actor that is already preset in the scene
+
+			Comp = PrefabActor->AddComponentByClass(CompClass, false, CompItemData.RelativeTransform, false);
+			if (Comp->GetName() != CompItemData.ComponentName) {
+				Comp->Rename(*CompItemData.ComponentName);
+			}
+			// Load the prefab properties in
+			LoadComponentState(Comp, CompItemData, InSettings);
+			PostLoadObjects.Add(Comp);
+		}
+
+		AssignAssetUserData(Comp, CompItemData.PrefabItemID, PrefabActor);
+
+		{
+			UActorComponent*& CompRef = PrefabItemToComponentMap.FindOrAdd(CompItemData.PrefabItemID);
+			CompRef = Comp;
+		}
+	}
+
+	// Actor component support
+	TMap<FGuid, AActor*> PrefabItemToActorMap;
+	if(TSharedPtr<IPrefabricatorService> Service = FPrefabricatorService::Get()) {
+		UWorld* World = PrefabActor->GetWorld();
 		for (FPrefabricatorActorData& ActorItemData : PrefabAsset->ActorData) {
 			// Handle backward compatibility
 			if (!ActorItemData.ClassPathRef.IsValid()) {
@@ -1420,6 +1419,7 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 				if (Template == nullptr || bPrefabOutOfDate) {
 					// We couldn't use a template,  so load the prefab properties in
 					LoadActorState(ChildActor, ActorItemData, InSettings);
+					PostLoadObjects.Add(ChildActor);
 
 					// Save this as a template for future reuse
 					if (LoadState && InSettings.bCanSaveToCachedTemplate) {
@@ -1462,44 +1462,44 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 					LoadStateFromPrefabAsset(ChildPrefab, InSettings);
 				}
 			}
-		}
+		}		
+	}
 
-		// Fix up the cross references
+	// Fix up the cross references
+	for (const FPrefabricatorComponentData& ComponentData : PrefabAsset->ComponentData) {
+		UActorComponent** CompPtr = PrefabItemToComponentMap.Find(ComponentData.PrefabItemID);
+		if (!CompPtr) continue;
 		{
-			for (const FPrefabricatorComponentData& ComponentData : PrefabAsset->ComponentData) {
-				UActorComponent** CompPtr = PrefabItemToComponentMap.Find(ComponentData.PrefabItemID);
-				if (!CompPtr) continue;
-				{
-					UActorComponent* Comp = *CompPtr;
-					FixupCrossReferences(ComponentData.Properties, Comp, PrefabItemToActorMap);
-				}
-			}
+			UActorComponent* Comp = *CompPtr;
+			FixupCrossReferences(ComponentData.Properties, Comp, PrefabItemToActorMap);
+		}
+	}
 
-			for (const FPrefabricatorActorData& ActorItemData : PrefabAsset->ActorData) {
-				AActor** ActorPtr = PrefabItemToActorMap.Find(ActorItemData.PrefabItemID);
-				if (!ActorPtr) continue;
+	for (const FPrefabricatorActorData& ActorItemData : PrefabAsset->ActorData) {
+		AActor** ActorPtr = PrefabItemToActorMap.Find(ActorItemData.PrefabItemID);
+		if (!ActorPtr) continue;
 
-				AActor* Actor = *ActorPtr;
-				FixupCrossReferences(ActorItemData.Properties, Actor, PrefabItemToActorMap);
+		AActor* Actor = *ActorPtr;
+		FixupCrossReferences(ActorItemData.Properties, Actor, PrefabItemToActorMap);
 
-				TMap<FString, UActorComponent*> ComponentByPath;
-				for (UActorComponent* Component : Actor->GetComponents()) {
-					FString ComponentPath = Component->GetPathName(Actor);
-					UActorComponent*& ComponentRef = ComponentByPath.FindOrAdd(ComponentPath);
-					ComponentRef = Component;
-				}
-
-				for (const FPrefabricatorComponentData& ComponentData : ActorItemData.Components) {
-					UActorComponent** ComponentPtr = ComponentByPath.Find(ComponentData.ComponentName);
-					UActorComponent* Component = ComponentPtr ? *ComponentPtr : nullptr;
-					if (!ComponentPtr) continue;
-
-					FixupCrossReferences(ComponentData.Properties, Component, PrefabItemToActorMap);
-				}
-			}
-
+		TMap<FString, UActorComponent*> ComponentByPath;
+		for (UActorComponent* Component : Actor->GetComponents()) {
+			FString ComponentPath = Component->GetPathName(Actor);
+			UActorComponent*& ComponentRef = ComponentByPath.FindOrAdd(ComponentPath);
+			ComponentRef = Component;
 		}
 
+		for (const FPrefabricatorComponentData& ComponentData : ActorItemData.Components) {
+			UActorComponent** ComponentPtr = ComponentByPath.Find(ComponentData.ComponentName);
+			UActorComponent* Component = ComponentPtr ? *ComponentPtr : nullptr;
+			if (!ComponentPtr) continue;
+
+			FixupCrossReferences(ComponentData.Properties, Component, PrefabItemToActorMap);
+		}
+	}
+	for (auto Comp : PostLoadObjects)
+	{
+		Comp->PostLoad();
 	}
 
 	// Destroy the unused actors from the pool
@@ -1516,26 +1516,31 @@ void FPrefabTools::LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPr
 
 namespace
 {
-	void FixupCrossReferences_Helper(
-		UObject* ObjPtr
-		, UPrefabricatorProperty* PrefabProperty
+	struct FFixupCrossReferencesContext
+	{
+		UObject* ObjPtr;
+		UPrefabricatorProperty* PrefabProperty;
+		TMap<FGuid, AActor*>& PrefabItemToActorMap;
+	};
+
+	void FixupCrossReferences_ObjectHelper(
+		FFixupCrossReferencesContext& Context
+		, void* ObjectPtr
 		, const FObjectPropertyBase* ObjectProperty
-		, void* PropertyValueAddress
 		, const FString& PropertyPath
-		, int32 Index
-		, TMap<FGuid, AActor*>& PrefabItemToActorMap
+		, int32 Index=-1
 	)
 	{
 		FString NewPropertyPath = GetNestedPropertyPath(PropertyPath, ObjectProperty, Index);
 
-		auto NestedPropertyData = PrefabProperty->NestedPropertyData.Find(NewPropertyPath);
+		auto NestedPropertyData = Context.PrefabProperty->NestedPropertyData.Find(NewPropertyPath);
 		if (!NestedPropertyData) return;
 
-		AActor** SearchResult = PrefabItemToActorMap.Find(NestedPropertyData->CrossReferencePrefabActorId);
+		AActor** SearchResult = Context.PrefabItemToActorMap.Find(NestedPropertyData->CrossReferencePrefabActorId);
 		if (!SearchResult) return;
 		AActor* CrossReference = *SearchResult;
 
-		ObjectProperty->SetObjectPropertyValue(PropertyValueAddress, CrossReference);
+		ObjectProperty->SetObjectPropertyValue(ObjectPtr, CrossReference);
 
 		////////
 		FString ActorName = CrossReference ? CrossReference->GetName() : "[NONE]";
@@ -1544,34 +1549,30 @@ namespace
 	}
 
 	void FixupCrossReferences_StructHelper(
-		UObject* ObjPtr
-		, void* ContainerPtr
-		, UPrefabricatorProperty* PrefabProperty
+		FFixupCrossReferencesContext& Context
+		, void* StructPtr
 		, const FStructProperty* StructProperty
 		, const FString& PropertyPath
-		, int32 PropertyElementIndex
-		, TMap<FGuid, AActor*>& PrefabItemToActorMap
+		, int32 PropertyElementIndex=-1
 	);
 
 	void FixupCrossReferences_ArrayHelper(
-		UObject* ObjPtr
-		, void* ContainerPtr
-		, UPrefabricatorProperty* PrefabProperty
+		FFixupCrossReferencesContext& Context
+		, void* ArrayPtr
 		, const FArrayProperty* ArrayProperty
 		, const FString& PropertyPath
-		, int32 PropertyElementIndex
-		, TMap<FGuid, AActor*>& PrefabItemToActorMap
+		, int32 PropertyElementIndex=-1
 	)
 	{
 		FString NewPropertyPath = GetNestedPropertyPath(PropertyPath, ArrayProperty, PropertyElementIndex);
 
 		if (const FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(ArrayProperty->Inner))
 		{
-			auto NestedPropertyData = PrefabProperty->NestedPropertyData.Find(NewPropertyPath);
+			auto NestedPropertyData = Context.PrefabProperty->NestedPropertyData.Find(NewPropertyPath);
 			if (!NestedPropertyData)
 				return;
 			
-			FScriptArrayHelper_InContainer Helper(ArrayProperty, ContainerPtr);
+			FScriptArrayHelper Helper(ArrayProperty, ArrayPtr);
 			// The array may have different length by default.
 			if (Helper.Num() < NestedPropertyData->ArrayLength)
 			{
@@ -1579,16 +1580,17 @@ namespace
 			}
 			for (int32 Index = 0; Index < Helper.Num(); Index++)
 			{
-				FixupCrossReferences_Helper(ObjPtr, PrefabProperty, ObjectProperty, Helper.GetRawPtr(Index), NewPropertyPath, Index, PrefabItemToActorMap);
+				void* ValuePtr = Helper.GetRawPtr(Index);
+				FixupCrossReferences_ObjectHelper(Context, ValuePtr, ObjectProperty, NewPropertyPath, Index);
 			}
 		}
 		else if (const FStructProperty* StructProperty = CastField<FStructProperty>(ArrayProperty->Inner))
 		{
-			auto NestedPropertyData = PrefabProperty->NestedPropertyData.Find(NewPropertyPath);
+			auto NestedPropertyData = Context.PrefabProperty->NestedPropertyData.Find(NewPropertyPath);
 			if (!NestedPropertyData)
 				return;
 
-			FScriptArrayHelper_InContainer Helper(ArrayProperty, ContainerPtr);
+			FScriptArrayHelper Helper(ArrayProperty, ArrayPtr);
 			// The array may have different length by default.
 			if (Helper.Num() < NestedPropertyData->ArrayLength)
 			{
@@ -1596,43 +1598,41 @@ namespace
 			}
 			for (int32 Index = 0; Index < Helper.Num(); Index++)
 			{
-				FixupCrossReferences_StructHelper(ObjPtr, Helper.GetRawPtr(Index), PrefabProperty, StructProperty, NewPropertyPath, Index, PrefabItemToActorMap);
+				void* ValuePtr = Helper.GetRawPtr(Index);
+				FixupCrossReferences_StructHelper(Context, ValuePtr, StructProperty, NewPropertyPath, Index);
 			}
 		}
 	}
 
-	void FixupCrossReferences_StructHelper(
-		UObject* ObjPtr
-		, void* ContainerPtr
-		, UPrefabricatorProperty* PrefabProperty
-		, const FStructProperty* StructProperty
-		, const FString& PropertyPath
-		, int32 PropertyElementIndex
-		, TMap<FGuid, AActor*>& PrefabItemToActorMap
-	)
-	{
-		FString NewPropertyPath = GetNestedPropertyPath(PropertyPath, StructProperty, PropertyElementIndex);
+    void FixupCrossReferences_StructHelper(
+        FFixupCrossReferencesContext& Context
+        , void* StructPtr
+        , const FStructProperty* StructProperty
+        , const FString& PropertyPath
+        , int32 PropertyElementIndex
+    )
+    {
+        FString NewPropertyPath = GetNestedPropertyPath(PropertyPath, StructProperty, PropertyElementIndex);
 
-		for (TFieldIterator<FProperty> It(StructProperty->Struct); It; ++It) {
-			FProperty* InnerProperty = *It;
+        for (TFieldIterator<FProperty> It(StructProperty->Struct); It; ++It) {
+            FProperty* InnerProperty = *It;
 
-			if (const FStructProperty* StructProperty = CastField<FStructProperty>(InnerProperty)) {
-				void* PropPtr = StructProperty->ContainerPtrToValuePtr<void>(ContainerPtr, 0);
-				FixupCrossReferences_StructHelper(ObjPtr, PropPtr, PrefabProperty, StructProperty, NewPropertyPath, -1, PrefabItemToActorMap);
-			}
-			// Support for TArrays (TODO: Adds support for sets and maps).
-			else if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(InnerProperty))
-			{
-				FixupCrossReferences_ArrayHelper(ObjPtr, ContainerPtr, PrefabProperty, ArrayProperty, NewPropertyPath, -1, PrefabItemToActorMap);
-			}
-			// Changed from FObjectProperty to FObjectPropertyBase to support also soft references.
-			else if (const FObjectPropertyBase* ObjProperty = CastField<FObjectPropertyBase>(InnerProperty)) 
-			{
-				void* PropPtr = ObjProperty->ContainerPtrToValuePtr<void>(ContainerPtr, 0);
-				FixupCrossReferences_Helper(ObjPtr, PrefabProperty, ObjProperty, PropPtr, NewPropertyPath, -1, PrefabItemToActorMap);
-			}
-		}
-	}
+            if (const FStructProperty* StructProperty = CastField<FStructProperty>(InnerProperty)) {
+                void* ValuePtr = StructProperty->ContainerPtrToValuePtr<void>(StructPtr, 0);
+                FixupCrossReferences_StructHelper(Context, ValuePtr, StructProperty, NewPropertyPath);
+            }
+            // Support for TArrays (TODO: Adds support for sets and maps).
+            else if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(InnerProperty)) {
+                void* ValuePtr = ArrayProperty->ContainerPtrToValuePtr<void>(StructPtr, 0);
+                FixupCrossReferences_ArrayHelper(Context, ValuePtr, ArrayProperty, NewPropertyPath);
+            }
+            // Changed from FObjectProperty to FObjectPropertyBase to support also soft references.
+            else if (const FObjectPropertyBase* ObjProperty = CastField<FObjectPropertyBase>(InnerProperty)) {
+                void* ValuePtr = ObjProperty->ContainerPtrToValuePtr<void>(StructPtr, 0);
+                FixupCrossReferences_ObjectHelper(Context, ValuePtr, ObjProperty, NewPropertyPath);
+            }
+        }
+    }
 }
 
 void FPrefabTools::FixupCrossReferences(const TArray<UPrefabricatorProperty*>& PrefabProperties, UObject* ObjToWrite, TMap<FGuid, AActor*>& PrefabItemToActorMap)
@@ -1640,22 +1640,27 @@ void FPrefabTools::FixupCrossReferences(const TArray<UPrefabricatorProperty*>& P
 	for (UPrefabricatorProperty* PrefabProperty : PrefabProperties) {
 		if (!PrefabProperty || !PrefabProperty->bIsCrossReferencedActor) continue;
 
+		FFixupCrossReferencesContext Context{ ObjToWrite , PrefabProperty , PrefabItemToActorMap };
+
 		FProperty* Property = ObjToWrite->GetClass()->FindPropertyByName(*PrefabProperty->PropertyName);
 		FString PropertyPath = "";
 
 		// Support for TArrays (TODO: Adds support for sets and maps).
 		if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property))
 		{
-			void* StructPtr = StructProperty->ContainerPtrToValuePtr<void>(ObjToWrite, 0);
-			FixupCrossReferences_StructHelper(ObjToWrite, StructPtr, PrefabProperty, StructProperty, PropertyPath, -1, PrefabItemToActorMap);
+			void* ValuePtr = Property->ContainerPtrToValuePtr<void>(ObjToWrite);
+			FixupCrossReferences_StructHelper(Context, ValuePtr, StructProperty, PropertyPath);
 		}
 		else if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
 		{
-			FixupCrossReferences_ArrayHelper(ObjToWrite, ObjToWrite, PrefabProperty, ArrayProperty, PropertyPath, -1, PrefabItemToActorMap);
+			void* ValuePtr = Property->ContainerPtrToValuePtr<void>(ObjToWrite);
+			FixupCrossReferences_ArrayHelper(Context, ValuePtr, ArrayProperty, PropertyPath);
 		}
 		// FObjectProperty instead of FObjectPropertyBase to support also soft references
-		else if (const FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(Property)) {
-			FixupCrossReferences_Helper(ObjToWrite, PrefabProperty, ObjectProperty, ObjectProperty->ContainerPtrToValuePtr<void>(ObjToWrite), PropertyPath, -1, PrefabItemToActorMap);
+		else if (const FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(Property)) 
+		{
+			void* ValuePtr = Property->ContainerPtrToValuePtr<void>(ObjToWrite);
+			FixupCrossReferences_ObjectHelper(Context, ValuePtr, ObjectProperty, PropertyPath);
 		}
 		// Note: there cannot be more than array, structs, and straight up object deemed as cross ref
 		// Nothing to do here
