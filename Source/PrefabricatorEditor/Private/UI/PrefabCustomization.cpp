@@ -48,9 +48,12 @@ namespace {
 void FPrefabActorCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
 {
 	TArray<APrefabActor*> PrefabActors = GetDetailObject<APrefabActor>(&DetailBuilder);
+	TArray<UObject*> PrefabActors2;
+	PrefabActors2.Reserve(PrefabActors.Num());
 	TArray<UObject*> PrefabComponents;
 	bool bIsCollection = false;
 	for (APrefabActor* PrefabActor : PrefabActors) {
+		PrefabActors2.Add(PrefabActor);
 		if (PrefabActor->PrefabComponent) {
 			PrefabComponents.Add(PrefabActor->PrefabComponent);
 
@@ -74,6 +77,8 @@ void FPrefabActorCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBui
 	if (!bIsCollection) {
 		IDetailCategoryBuilder& Category = DetailBuilder.EditCategory("Prefab Asset Actions", FText::GetEmpty(), ECategoryPriority::Important);
 		Category.AddExternalObjectProperty(PrefabComponents, GET_MEMBER_NAME_CHECKED(UPrefabComponent, PrefabAssetInterface));
+		Category.AddExternalObjectProperty(PrefabActors2, GET_MEMBER_NAME_CHECKED(APrefabActor, UnstagedChanges));
+		Category.AddExternalObjectProperty(PrefabActors2, GET_MEMBER_NAME_CHECKED(APrefabActor, StagedChanges));
 
 		Category.AddCustomRow(LOCTEXT("PrefabCommand_Filter", "save load prefab asset"))
 		.WholeRowContent()
@@ -108,6 +113,30 @@ void FPrefabActorCustomization::CustomizeDetails(IDetailLayoutBuilder& DetailBui
 			]
 
 		];
+			
+		Category.AddCustomRow(LOCTEXT("PrefabCommandChangeStage_Filter", "Change Stage"))
+			.WholeRowContent()
+			[			
+				SNew(SHorizontalBox)
+					+SHorizontalBox::Slot()
+					.VAlign(VAlign_Center)
+					.FillWidth(1.0f)
+					//.Padding(4.0f)
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("PrefabCommand_StageAlLChanges", "Stage All Changes"))
+						.OnClicked(FOnClicked::CreateStatic(&FPrefabActorCustomization::StageAllChanges, &DetailBuilder))
+					]
+					+ SHorizontalBox::Slot()
+					.VAlign(VAlign_Center)
+					.FillWidth(1.0f)
+					//.Padding(4.0f)
+					[
+						SNew(SButton)
+						.Text(LOCTEXT("PrefabCommand_UnstageAlLChanges", "Unstage All Changes"))
+						.OnClicked(FOnClicked::CreateStatic(&FPrefabActorCustomization::UnstageAllChanges, &DetailBuilder))
+					]
+			];
 
 		Category.AddCustomRow(LOCTEXT("PrefabCommandRandomize_Filter", "randomize prefab collection asset"))
 			.WholeRowContent()
@@ -233,6 +262,30 @@ FReply FPrefabActorCustomization::UnlinkPrefab(IDetailLayoutBuilder* DetailBuild
 	for (APrefabActor* PrefabActor : PrefabActors) {
 		if (PrefabActor) {
 			FPrefabTools::UnlinkAndDestroyPrefabActor(PrefabActor);
+		}
+	}
+	return FReply::Handled();
+}
+
+///////////////////////////////// FPrefabRandomizerCustomization /////////////////////////////////
+FReply FPrefabActorCustomization::StageAllChanges(IDetailLayoutBuilder* DetailBuilder)
+{
+	TArray<APrefabActor*> PrefabActors = GetDetailObject<APrefabActor>(DetailBuilder);
+	for (APrefabActor* PrefabActor : PrefabActors) {
+		if (PrefabActor) {
+			PrefabActor->StageAllChanges();
+		}
+	}
+	return FReply::Handled();
+}
+
+///////////////////////////////// FPrefabRandomizerCustomization /////////////////////////////////
+FReply FPrefabActorCustomization::UnstageAllChanges(IDetailLayoutBuilder* DetailBuilder)
+{
+	TArray<APrefabActor*> PrefabActors = GetDetailObject<APrefabActor>(DetailBuilder);
+	for (APrefabActor* PrefabActor : PrefabActors) {
+		if (PrefabActor) {
+			PrefabActor->UnstageAllChanges();
 		}
 	}
 	return FReply::Handled();

@@ -12,58 +12,78 @@
 class UPrefabricatorAsset;
 class IPropertyHandle;
 
-USTRUCT(BlueprintType)
-struct PREFABRICATORRUNTIME_API FPrefabInstancePropertyChange
+
+UCLASS(BlueprintType, EditInlineNew, CollapseCategories, HideDropdown)
+class PREFABRICATORRUNTIME_API UPrefabPropertyChange : public UObject
 {
 	GENERATED_BODY()
 
+public:
 	UPROPERTY(VisibleAnywhere)
 	TSoftObjectPtr<UObject> Object;
 
-#if WITH_EDITORONLY_DATA
 	UPROPERTY(VisibleAnywhere, meta=(EditCondition=false, EditConditionHides))
 	FString ObjectDisplayName;
+
+#if WITH_EDITORONLY_DATA
+	UFUNCTION()
+	void UpdateObjectDisplayName() 
+	{ 
+		ObjectDisplayName = Object->IsA(AActor::StaticClass()) ?
+			Cast<AActor>(Object.Get())->GetActorLabel() :
+			Object->GetName();
+		ObjectDisplayName += ": " + PropertyPath;
+	}
 #endif
+	FString GetObjectDisplayName()
+	{
+		UpdateObjectDisplayName();
+		return ObjectDisplayName;
+	}
 
 	UPROPERTY(VisibleAnywhere)
 	FString PropertyPath = "";
 
 	UPROPERTY(EditAnywhere)
 	bool bIsStaged = false;
+};
+using UPrefabPropertyChangePtr = TObjectPtr<UPrefabPropertyChange>;
 
-	FPrefabInstancePropertyChange()
+USTRUCT(BlueprintType)
+struct PREFABRICATORRUNTIME_API FPrefabPropertyChangeKey
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere)
+	TSoftObjectPtr<UObject> Object = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	FString PropertyPath = "";
+
+	FPrefabPropertyChangeKey()
 	{
 	}
 
-#if WITH_EDITOR
-	void UpdateDisplayName()
+	FPrefabPropertyChangeKey(const UPrefabPropertyChange& Change)
+		: Object(Change.Object)
+		, PropertyPath(Change.PropertyPath)
 	{
-		if (Object)
-		{
-			ObjectDisplayName =
-				Object->IsA(AActor::StaticClass()) ?
-				Cast<AActor>(Object.Get())->GetActorLabel() :
-				Object->GetName();
-		}
 	}
-#endif
 
-	FPrefabInstancePropertyChange(TSoftObjectPtr<UObject> Object, FString PropertyPath)
+	FPrefabPropertyChangeKey(TSoftObjectPtr<UObject> Object, FString PropertyPath)
 		: Object(Object)
 		, PropertyPath(PropertyPath)
 	{
-		UpdateDisplayName();
 	}
 
 	// Define the == operator so Unreal can compare two keys for equality.
-	bool operator==(const FPrefabInstancePropertyChange& Other) const
+	bool operator==(const FPrefabPropertyChangeKey& Other) const
 	{
 		return Object == Other.Object && PropertyPath == Other.PropertyPath;
 	}
-
 };
 
-FORCEINLINE uint32 GetTypeHash(const FPrefabInstancePropertyChange& Key)
+FORCEINLINE uint32 GetTypeHash(const FPrefabPropertyChangeKey& Key)
 {
 	return HashCombine(GetTypeHash(Key.Object), GetTypeHash(Key.PropertyPath));
 }
@@ -76,14 +96,24 @@ public:
 	class UPrefabComponent* PrefabComponent;
 
 public:
-	UPROPERTY(EditAnywhere, Category = "Prefabricator", Meta=(TitleProperty="{ObjectDisplayName}{PropertyPath}"))
-	TArray<FPrefabInstancePropertyChange> UnstagedChanges;
+	UPROPERTY(EditAnywhere, Category = "Prefabricator", Instanced, Meta=(TitleProperty=ObjectDisplayName))
+	TArray<TObjectPtr<UPrefabPropertyChange>> UnstagedChanges;
 
-	UPROPERTY(EditAnywhere, Category = "Prefabricator", Meta = (TitleProperty = "{ObjectDisplayName}{PropertyPath}"))
-	TArray<FPrefabInstancePropertyChange> StagedChanges;
+	UPROPERTY(EditAnywhere, Category = "Prefabricator", Instanced, Meta = (TitleProperty=ObjectDisplayName))
+	TArray<TObjectPtr<UPrefabPropertyChange>> StagedChanges;
 
 	UPROPERTY()
-	TSet<FPrefabInstancePropertyChange> ChangeSet;
+	TMap<FPrefabPropertyChangeKey, TWeakObjectPtr<UPrefabPropertyChange>> Changes;
+
+	UPrefabPropertyChange* GetPropertyChange(const FPrefabPropertyChangeKey& Key)
+	{
+		if (auto ChangeWeakPtr = Changes.Find(Key))
+		{
+			return ChangeWeakPtr->Get();
+		}
+
+		return nullptr;
+	}
 
 	/// AActor Interface 
 	virtual void Destroyed() override;
@@ -94,6 +124,8 @@ public:
 	virtual void PostEditChangeProperty(struct FPropertyChangedEvent&) override;
 	virtual void PostEditChangeChainProperty(struct FPropertyChangedChainEvent&) override;
 	void OnObjectPropertyChangedChain(UObject*, struct FPropertyChangedChainEvent&);
+	void StageAllChanges();
+	void UnstageAllChanges();
 
 	//void HandlePropertyChangedEvent(FPropertyChangedEvent& PropertyChangedEvent);
 

@@ -37,6 +37,9 @@ struct PREFABRICATORRUNTIME_API FPrefabricatorNestedPropertyData
 
 	UPROPERTY()
 	FGuid CrossReferencePrefabActorId;
+
+	//UPROPERTY()
+	//bool bShouldSkipSerialization = false;
 };
 
 UCLASS()
@@ -57,6 +60,9 @@ public:
 
 	UPROPERTY()
 	bool bContainsStructProperty = false;
+
+	//UPROPERTY()
+	//bool bPartialSerialization = false;
 
 	UPROPERTY()
 	TMap<FString, FPrefabricatorNestedPropertyData> NestedPropertyData;

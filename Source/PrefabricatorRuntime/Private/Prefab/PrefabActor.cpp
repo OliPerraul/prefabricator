@@ -96,42 +96,52 @@ void APrefabActor::PostEditChangeChainProperty(struct FPropertyChangedChainEvent
 {
 	Super::PostEditChangeChainProperty(Event);
 
-	FName PropertyName = (Event.Property != NULL) ? Event.Property->GetFName() : NAME_None;
+	FName PropertyName = "";
+	FProperty* Property = nullptr;
+	auto NextNode = Event.PropertyChain.GetHead()->GetNextNode();
+	if (!NextNode)
+		return;	
+	Property = NextNode->GetValue();
+	PropertyName = Property != nullptr ? Property->GetFName() : NAME_None;
+	if (PropertyName != GET_MEMBER_NAME_CHECKED(UPrefabPropertyChange, bIsStaged))
+		return;
+	
 
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(FPrefabInstancePropertyChange, bIsStaged))
+	Property = Event.Property;
+	PropertyName = Property != nullptr ? Property->GetFName() : NAME_None;
+
+	int32 PropertyElementIndex = Event.GetArrayIndex(PropertyName.ToString());
+	if (PropertyElementIndex != -1)
 	{
-		if(auto PropertyNode = Event.PropertyChain.GetHead())
+		UPrefabPropertyChange* Change = nullptr;
+		if (PropertyName == GET_MEMBER_NAME_CHECKED(APrefabActor, UnstagedChanges))
 		{
-			if (auto Property = PropertyNode->GetValue())
+			if (UnstagedChanges[PropertyElementIndex]->bIsStaged)
 			{
-				int32 PropertyElementIndex = Event.GetArrayIndex(Property->GetName());
-				if (PropertyElementIndex != -1)
-				{
-					FPrefabInstancePropertyChange Change;
-					if (Property->GetName() == GET_MEMBER_NAME_CHECKED(APrefabActor, UnstagedChanges))
-					{
-						if (UnstagedChanges[PropertyElementIndex].bIsStaged)
-						{
-							Change = UnstagedChanges[PropertyElementIndex];
-							StagedChanges.Add(Change);
-							UnstagedChanges.RemoveAt(PropertyElementIndex);
-						}
-					}
-					else if (Property->GetName() == GET_MEMBER_NAME_CHECKED(APrefabActor, StagedChanges))
-					{
-						if (!StagedChanges[PropertyElementIndex].bIsStaged)
-						{
-							Change = StagedChanges[PropertyElementIndex];
-							UnstagedChanges.Add(Change);
-							StagedChanges.RemoveAt(PropertyElementIndex);
-						}
-					}
-					if (auto cachedChange = ChangeSet.Find(Change))
-					{
-						cachedChange->bIsStaged = Change.bIsStaged;
-					}
-				}
+				Change = UnstagedChanges[PropertyElementIndex];
+				StagedChanges.Add(Change);
+				UnstagedChanges.RemoveAt(PropertyElementIndex);
 			}
+		}
+		else if (PropertyName == GET_MEMBER_NAME_CHECKED(APrefabActor, StagedChanges))
+		{
+			if (!StagedChanges[PropertyElementIndex]->bIsStaged)
+			{
+				Change = StagedChanges[PropertyElementIndex];
+				UnstagedChanges.Add(Change);
+				StagedChanges.RemoveAt(PropertyElementIndex);
+			}
+		}
+		if (Change)
+		{
+			UnstagedChanges.Sort([](UPrefabPropertyChangePtr Elem1, UPrefabPropertyChangePtr Elem2)
+			{
+				return Elem1->GetObjectDisplayName() < Elem2->GetObjectDisplayName();
+			});
+			StagedChanges.Sort([](UPrefabPropertyChangePtr Elem1, UPrefabPropertyChangePtr Elem2)
+			{
+				return Elem1->GetObjectDisplayName() < Elem2->GetObjectDisplayName();
+			});
 		}
 	}
 }
@@ -287,22 +297,73 @@ void APrefabActor::OnObjectPropertyChangedChain(UObject* ObjectBeingModified, FP
 		}
 
 		TSoftObjectPtr ObjectBeingModifiedPtr(ObjectBeingModified);
-		FPrefabInstancePropertyChange Key(ObjectBeingModifiedPtr, PropertyPath);
-		if (!ChangeSet.Contains(Key))
+		FPrefabPropertyChangeKey Key(ObjectBeingModifiedPtr, PropertyPath);
+		if (!Changes.Contains(Key))
 		{			
-			UnstagedChanges.Emplace(Key);
-			ChangeSet.Add(Key);
+			auto Change = NewObject<UPrefabPropertyChange>(this, NAME_None);
+			UnstagedChanges.Add(Change);
+			Change->PropertyPath = PropertyPath;
+			Change->Object = ObjectBeingModifiedPtr;
+			Changes.Add(Key, Change);
+			UnstagedChanges.Sort([](UPrefabPropertyChangePtr Elem1, UPrefabPropertyChangePtr Elem2)
+			{
+				return Elem1->GetObjectDisplayName() < Elem2->GetObjectDisplayName();
+			});
 		}
 	}
+	for (auto& Change : UnstagedChanges)
+	{
+		if (!Change) continue;
+		Change->UpdateObjectDisplayName();
+	}
+	for (auto& Change : StagedChanges)
+	{
+		if (!Change) continue;
+		Change->UpdateObjectDisplayName();
+	}
+	TArray<FPrefabPropertyChangeKey> ChangeKeys;
+	Changes.GetKeys(ChangeKeys);
+	for (auto& ChangeKey : ChangeKeys)
+	{
+		if (auto ChangeWeakPtr = Changes.Find(ChangeKey))
+		{
+			if(!ChangeWeakPtr->IsValid())
+			{
+				Changes.Remove(ChangeKey);
+			}
+		}
+	}
+	Changes.Compact();
+}
 
-	for (auto& change : UnstagedChanges)
+/** Callback for object property modifications, called by UObject::PreEditChange with a full property chain */
+void APrefabActor::StageAllChanges()
+{
+	for (auto Change : UnstagedChanges)
 	{
-		change.UpdateDisplayName();
+		Change->bIsStaged = true;
+		StagedChanges.Add(Change);
 	}
-	for (auto& change : StagedChanges)
+	UnstagedChanges.Empty();
+	StagedChanges.Sort([](UPrefabPropertyChangePtr Elem1, UPrefabPropertyChangePtr Elem2)  -> bool
 	{
-		change.UpdateDisplayName();
+		return Elem1->GetObjectDisplayName() < Elem2->GetObjectDisplayName();
+	});
+}
+
+/** Callback for object property modifications, called by UObject::PreEditChange with a full property chain */
+void APrefabActor::UnstageAllChanges()
+{
+	for (auto Change : StagedChanges)
+	{
+		Change->bIsStaged = false;
+		UnstagedChanges.Add(Change);
 	}
+	StagedChanges.Empty();
+	UnstagedChanges.Sort([](UPrefabPropertyChangePtr Elem1, UPrefabPropertyChangePtr Elem2) -> bool
+	{
+		return Elem1->GetObjectDisplayName() < Elem2->GetObjectDisplayName();
+	});
 }
 
 #endif // WITH_EDITOR
