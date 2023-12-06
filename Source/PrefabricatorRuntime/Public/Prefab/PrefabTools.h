@@ -56,12 +56,7 @@ private:
 	TMap<FString, FGuid> ActorPathToItemId;
 };
 
-struct FSaveStateContext
-{
-	FPrefabricatorEntryBase& State;
-	const FPrefabActorLookup& CrossReferences;
-};
-
+using UPrefabricatorPropertyMap = TMap<FString, TObjectPtr<class UPrefabricatorProperty>>;
 class PREFABRICATORRUNTIME_API FPrefabTools {
 public:
 	static bool CanCreatePrefab();
@@ -73,7 +68,7 @@ public:
 	static void SaveStateToPrefabAsset(APrefabActor* PrefabActor);
 	static void LoadStateFromPrefabAsset(APrefabActor* PrefabActor, const FPrefabLoadSettings& InSettings = FPrefabLoadSettings());
 
-	static void FixupCrossReferences(const TArray<UPrefabricatorProperty*>& PrefabProperties, UObject* ObjToWrite, TMap<FGuid, AActor*>& PrefabItemToActorMap);
+	static void FixupCrossReferences(const UPrefabricatorPropertyMap& PrefabProperties, UObject* ObjToWrite, TMap<FGuid, AActor*>& PrefabItemToActorMap);
 
 	static void UnlinkAndDestroyPrefabActor(APrefabActor* PrefabActor);
 	static void GetActorChildren(AActor* InParent, TArray<AActor*>& OutChildren);

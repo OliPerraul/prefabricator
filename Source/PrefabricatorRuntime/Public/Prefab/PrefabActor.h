@@ -44,9 +44,6 @@ public:
 	UPROPERTY(VisibleAnywhere)
 	FString PropertyPath = "";
 
-	UPROPERTY(VisibleAnywhere)
-	FString OriginalValue = "";
-
 	UPROPERTY(EditAnywhere)
 	bool bIsStaged = false;
 };
