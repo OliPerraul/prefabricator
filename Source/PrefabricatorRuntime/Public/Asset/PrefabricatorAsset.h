@@ -48,6 +48,40 @@ struct PREFABRICATORRUNTIME_API FPrefabricatorNestedPropertyData
 	//bool bShouldSkipSerialization = false;
 };
 
+TSoftObjectPtr<UObject> ResolveObjectPath(TSoftObjectPtr<UObject>)
+{
+	static const FString SoftReferenceSearchPattern = "([A-Za-z0-9_]+)'(.*?)'";
+	const FRegexPattern Pattern(*SoftReferenceSearchPattern);
+	auto& NestedPropertyDataItem = Entry.Value;
+	FRegexMatcher Matcher(Pattern, NestedPropertyDataItem.ExportedValue);
+
+	while (Matcher.FindNext()) {
+		FString FullPath = Matcher.GetCaptureGroup(0);
+		FString ClassName = Matcher.GetCaptureGroup(1);
+		FString ObjectPath = Matcher.GetCaptureGroup(2);
+		if (ClassName == "PrefabricatorAssetUserData") {
+			continue;
+		}
+		bool bUseQuotes = false;
+		if (ObjectPath.Len() >= 2 && ObjectPath.StartsWith("\"") && ObjectPath.EndsWith("\"")) {
+			ObjectPath = ObjectPath.Mid(1, ObjectPath.Len() - 2);
+			bUseQuotes = true;
+		}
+
+		FSoftObjectPath SoftPath(ObjectPath);
+
+		FPrefabricatorPropertyAssetMapping Mapping;
+		Mapping.AssetReference = SoftPath;
+		{
+			Mapping.AssetClassName = ClassName;
+			Mapping.AssetObjectPath = *ObjectPath;
+			Mapping.bUseQuotes = bUseQuotes;			
+			//UE_LOG(LogPrefabricatorAsset, Log, TEXT("######>>> Found Asset Ref: [%s][%s] | %s"), *Mapping.AssetClassName, *Mapping.AssetObjectPath.ToString(), *Mapping.AssetReference.GetAssetPathName().ToString());
+		}
+	}
+
+}
+
 UCLASS()
 class PREFABRICATORRUNTIME_API UPrefabricatorProperty : public UObject {
 	GENERATED_BODY()
@@ -67,9 +101,6 @@ public:
 	UPROPERTY()
 	bool bContainsStructProperty = false;
 
-	//UPROPERTY()
-	//bool bPartialSerialization = false;
-
 	UPROPERTY()
 	TMap<FString, FPrefabricatorNestedPropertyData> NestedPropertyData;
 
@@ -81,8 +112,9 @@ public:
 };
 
 USTRUCT()
-struct PREFABRICATORRUNTIME_API FPrefabricatorComponentData {
-	GENERATED_USTRUCT_BODY()
+struct PREFABRICATORRUNTIME_API FPrefabricatorEntryBase 
+{
+	GENERATED_BODY()
 
 	UPROPERTY()
 	FGuid PrefabItemID;
@@ -97,38 +129,27 @@ struct PREFABRICATORRUNTIME_API FPrefabricatorComponentData {
 	FTransform RelativeTransform;
 
 	UPROPERTY()
-	FString ComponentName;
-
-	UPROPERTY()
-	TArray<UPrefabricatorProperty*> Properties;
-};
-
-USTRUCT()
-struct PREFABRICATORRUNTIME_API FPrefabricatorActorData {
-	GENERATED_USTRUCT_BODY()
-
-	UPROPERTY()
-	FGuid PrefabItemID;
-
-	UPROPERTY()
-	FTransform RelativeTransform;
-
-	UPROPERTY()
-	FString ClassPath;
-
-	UPROPERTY()
-	FSoftClassPath ClassPathRef;
-
-	UPROPERTY()
-	TArray<UPrefabricatorProperty*> Properties;
-
-	UPROPERTY()
-	TArray<FPrefabricatorComponentData> Components;
+	TArray<TObjectPtr<UPrefabricatorProperty>> Properties;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY()
-	FString ActorName;
+	FString Name;
 #endif // WITH_EDITORONLY_DATA
+};
+
+USTRUCT()
+struct PREFABRICATORRUNTIME_API FPrefabricatorComponentData : public FPrefabricatorEntryBase
+{
+    GENERATED_BODY()
+};
+
+USTRUCT()
+struct PREFABRICATORRUNTIME_API FPrefabricatorActorData : public FPrefabricatorEntryBase
+{
+    GENERATED_BODY()
+
+    UPROPERTY()
+    TMap<TSoftObjectPtr<UObject>, FPrefabricatorComponentData> Components;
 };
 
 struct FPrefabAssetSelectionConfig {
@@ -169,16 +190,25 @@ enum class EPrefabricatorAssetVersion {
 	LatestVersion = LastVersionPlusOne -1
 };
 
+USTRUCT(BlueprintType)
+struct PREFABRICATORRUNTIME_API FPrefabricatorPropertyCacheEntry
+{
+	GENERATED_BODY()
+
+	UPROPERTY()
+	TMap<FString, TWeakObjectPtr<UPrefabricatorProperty>> Properties;
+}
+
 UCLASS(Blueprintable)
 class PREFABRICATORRUNTIME_API UPrefabricatorAsset : public UPrefabricatorAssetInterface {
 	GENERATED_UCLASS_BODY()
 public:
 
 	UPROPERTY()
-	TArray<FPrefabricatorComponentData> ComponentData;
+	TArray<TSoftObjectPtr<UObject>, FPrefabricatorComponentData> ComponentData;
 
 	UPROPERTY()
-	TArray<FPrefabricatorActorData> ActorData;
+	TMap<TSoftObjectPtr<UObject>, FPrefabricatorActorData> ActorData;
 
 	UPROPERTY()
 	TEnumAsByte<EComponentMobility::Type> PrefabMobility;
@@ -198,6 +228,10 @@ public:
 
 public:
 	virtual UPrefabricatorAsset* GetPrefabAsset(const FPrefabAssetSelectionConfig& InConfig) override;
+
+	void AddCacheEntry(UPrefabricatorProperty* Property, const FString& PropertyPath, const FGuid& Guid);
+
+	UPrefabricatorProperty* GetCacheEntry(const FGuid& Guid, const FString& PropertyPath);
 };
 
 

@@ -56,6 +56,12 @@ private:
 	TMap<FString, FGuid> ActorPathToItemId;
 };
 
+struct FSaveStateContext
+{
+	FPrefabricatorEntryBase& State;
+	const FPrefabActorLookup& CrossReferences;
+};
+
 class PREFABRICATORRUNTIME_API FPrefabTools {
 public:
 	static bool CanCreatePrefab();

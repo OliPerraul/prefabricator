@@ -22,6 +22,15 @@ UPrefabricatorAsset* UPrefabricatorAsset::GetPrefabAsset(const FPrefabAssetSelec
 	return this;
 }
 
+void UPrefabricatorAsset::AddCacheEntry(UPrefabricatorProperty* Property, const FString& PropertyPath, const FGuid& Guid)
+{
+}
+
+UPrefabricatorProperty* UPrefabricatorAsset::GetCacheEntry(const FGuid& Guid, const FString& PropertyPath)
+{
+}
+
+
 FVector FPrefabricatorAssetUtils::FindPivot(const TArray<AActor*>& InActors)
 {
 	FVector Pivot = FVector::ZeroVector;

@@ -304,6 +304,7 @@ void APrefabActor::OnObjectPropertyChangedChain(UObject* ObjectBeingModified, FP
 			UnstagedChanges.Add(Change);
 			Change->PropertyPath = PropertyPath;
 			Change->Object = ObjectBeingModifiedPtr;
+			//Change->OriginalValue = 
 			Changes.Add(Key, Change);
 			UnstagedChanges.Sort([](UPrefabPropertyChangePtr Elem1, UPrefabPropertyChangePtr Elem2)
 			{
