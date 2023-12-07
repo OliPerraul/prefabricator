@@ -27,7 +27,11 @@
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Widgets/SNullWidget.h"
 
+#include "SceneOutlinerPublicTypes.h"
+#include "SSceneOutliner.h"
+
 #define LOCTEXT_NAMESPACE "EditorUIExtender" 
+#define NONLOCTEXT(Text) FText::FromString(Text)
 
 namespace PrefabURLs {
 	// TODO: move me to a configuration file
@@ -44,6 +48,29 @@ void FEditorUIExtender::Extend()
 {
 	struct Local {
 
+		static TSharedRef<FExtender> OnExtendLevelEditorNoActorsContextMenu(const TSharedRef<FUICommandList> CommandList) {
+			TSharedRef<FExtender> Extender(new FExtender());
+
+			Extender->AddMenuExtension(
+				SceneOutliner::ExtensionHooks::Hierarchy
+				, EExtensionHook::After
+				, CommandList
+				, FMenuExtensionDelegate::CreateStatic(&Local::CreatePrefabNoActorsActionMenu)
+			);
+
+			//	"SceneOutliner.DefaultContextMenuBase",
+			//	EExtensionHook::After,
+			//	CommandList,
+			//	);
+			//Extender->AddMenuExtension(
+			//	"SceneOutliner.DefaultContextMenu",
+			//	EExtensionHook::After,
+			//	CommandList,
+			//	FMenuExtensionDelegate::CreateStatic(&Local::CreatePrefabNoActorsActionMenu));
+
+			return Extender;
+		}
+
 		static TSharedRef<FExtender> OnExtendLevelEditorActorContextMenu(const TSharedRef<FUICommandList> CommandList, const TArray<AActor*> SelectedActors) {
 			TSharedRef<FExtender> Extender(new FExtender());
 
@@ -58,6 +85,19 @@ void FEditorUIExtender::Extend()
 			}
 
 			return Extender;
+		}
+
+		static void CreatePrefabNoActorsActionMenu(class FMenuBuilder& MenuBuilder) {
+			MenuBuilder.AddMenuEntry
+			(
+				LOCTEXT("PrefabNoActorsTabTitle", "Create Prefab"),
+				LOCTEXT("PrefabNoActorsTooltipText", "Create a new prefab without selection"),
+				FSlateIcon(FPrefabEditorStyle::Get().GetStyleSetName(), "Prefabricator.ContextMenu.Icon"),
+				FUIAction
+				(
+					FExecuteAction::CreateStatic(&FPrefabTools::CreatePrefabNoActors)
+				)
+			);
 		}
 
 		static void CreateActionMenu(class FMenuBuilder& MenuBuilder, const TArray<AActor*> SelectedActors) {
@@ -248,6 +288,40 @@ void FEditorUIExtender::Extend()
 	MenuExtenders.Add(FLevelEditorModule::FLevelViewportMenuExtender_SelectedActors::CreateStatic(&Local::OnExtendLevelEditorActorContextMenu));
 	LevelViewportExtenderHandle = MenuExtenders.Last().GetHandle();
 
+	auto& MenuExtendersNoActors = LevelEditorModule.GetAllLevelEditorLevelMenuExtenders();
+	MenuExtendersNoActors.Add(FLevelEditorModule::FLevelEditorMenuExtender::CreateStatic(&Local::OnExtendLevelEditorNoActorsContextMenu));
+	LevelViewportExtenderHandleNoActors = MenuExtendersNoActors.Last().GetHandle();
+
+
+	if (UToolMenu* NoActorsMenu = UToolMenus::Get()->ExtendMenu("SceneOutliner.DefaultContextMenuBase"))
+	{
+		if (!NoActorsMenu->ContainsEntry("CreatePrefabNoActor"))
+		{
+			FMenuBuilder MenuBuilder(false, nullptr);
+			MenuBuilder.AddMenuEntry
+			(
+				LOCTEXT("PrefabNoActorsTabTitle", "Create Empty Prefab"),
+				LOCTEXT("PrefabNoActorsTooltipText", "Create a new empty prefab without selection"),
+				FSlateIcon(FPrefabEditorStyle::Get().GetStyleSetName(), "Prefabricator.ContextMenu.Icon"),
+				FUIAction
+				(
+					FExecuteAction::CreateStatic(&FPrefabTools::CreatePrefabNoActors)
+				)
+			);
+
+			NoActorsMenu->AddMenuEntry(
+				"CreatePrefabNoActor",
+				FToolMenuEntry::InitWidget(
+					"CreatePrefabNoActors",
+					MenuBuilder.MakeWidget(),
+					FText::GetEmpty(),
+					true,
+					false));
+		}
+	}
+	
+	
+
 	UToolMenu* AssetsToolBar = UToolMenus::Get()->ExtendMenu("LevelEditor.LevelEditorToolBar.AssetsToolBar");
 	if (AssetsToolBar) {
 		FToolMenuSection& Section = AssetsToolBar->AddSection("Prefabricator");
@@ -268,6 +342,12 @@ void FEditorUIExtender::Release()
 	FLevelEditorModule* LevelEditorModule = FModuleManager::Get().GetModulePtr<FLevelEditorModule>("LevelEditor");
 	if (LevelEditorModule)
 	{
+
+		if (LevelViewportExtenderHandleNoActors.IsValid())
+		{
+			typedef FLevelEditorModule::FLevelEditorMenuExtender DelegateTypeNoActors;
+			LevelEditorModule->GetAllLevelEditorLevelMenuExtenders().RemoveAll([this](const DelegateTypeNoActors& In) { return In.GetHandle() == LevelViewportExtenderHandleNoActors; });
+		}
 		if (LevelViewportExtenderHandle.IsValid())
 		{
 			typedef FLevelEditorModule::FLevelViewportMenuExtender_SelectedActors DelegateType;

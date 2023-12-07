@@ -138,12 +138,24 @@ bool FPrefabTools::CanCreatePrefab()
 	return GetNumSelectedActors() > 0;
 }
 
+bool FPrefabTools::CanCreatePrefabNoActors()
+{
+	return true;
+}
+
 void FPrefabTools::CreatePrefab()
 {
 	TArray<AActor*> SelectedActors;
 	GetSelectedActors(SelectedActors);
 
 	CreatePrefabFromActors(SelectedActors);
+}
+
+void FPrefabTools::CreatePrefabNoActors()
+{
+	TArray<AActor*> NoActors;
+	UWorld* World = GEditor->GetEditorWorldContext().World();
+	CreatePrefabFromActors(NoActors, World);
 }
 
 namespace {
@@ -178,12 +190,12 @@ namespace {
 	}
 }
 
-APrefabActor* FPrefabTools::CreatePrefabFromActors(const TArray<AActor*>& InActors)
+APrefabActor* FPrefabTools::CreatePrefabFromActors(const TArray<AActor*>& InActors, UWorld* InWorld)
 {
 	TArray<AActor*> Actors;
 	SanitizePrefabActorsForCreation(InActors, Actors);
 
-	if (Actors.Num() == 0) {
+	if (Actors.Num() == 0 && InWorld == nullptr) {
 		return nullptr;
 	}
 
@@ -197,7 +209,7 @@ APrefabActor* FPrefabTools::CreatePrefabFromActors(const TArray<AActor*>& InActo
 		Service->BeginTransaction(LOCTEXT("TransLabel_CreatePrefab", "Create Prefab"));
 	}
 
-	UWorld* World = Actors[0]->GetWorld();
+	UWorld* World = InWorld ? InWorld : Actors[0]->GetWorld();
 
 	FVector Pivot = FPrefabricatorAssetUtils::FindPivot(Actors);
 	APrefabActor* PrefabActor = World->SpawnActor<APrefabActor>(Pivot, FRotator::ZeroRotator);

@@ -11,6 +11,7 @@ public:
 
 private:
 	FDelegateHandle LevelViewportExtenderHandle;
+	FDelegateHandle LevelViewportExtenderHandleNoActors;
 	TSharedPtr<class FExtender> LevelToolbarExtender;
 };
 

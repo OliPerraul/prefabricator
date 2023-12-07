@@ -30,6 +30,14 @@ void FPrefabricatorCommands::RegisterCommands() {
 		FExecuteAction::CreateStatic(&FPrefabTools::CreatePrefab),
 		FCanExecuteAction::CreateStatic(&FPrefabTools::CanCreatePrefab)
 	);
+
+	UI_COMMAND(CreatePrefabNoActors, "Create Prefab", "Create a new prefab without selection", EUserInterfaceActionType::Button, FInputChord(EKeys::Enter));
+
+	LevelMenuActionList->MapAction(
+		CreatePrefabNoActors,
+		FExecuteAction::CreateStatic(&FPrefabTools::CreatePrefabNoActors),
+		FCanExecuteAction::CreateStatic(&FPrefabTools::CanCreatePrefabNoActors)
+	);
 }
 
 

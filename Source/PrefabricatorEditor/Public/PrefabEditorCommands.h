@@ -15,6 +15,7 @@ public:
 public:
 
 	TSharedPtr<FUICommandInfo> CreatePrefab;
+	TSharedPtr<FUICommandInfo> CreatePrefabNoActors;
 	TSharedPtr<class FUICommandList> LevelMenuActionList;
 
 };

@@ -43,7 +43,8 @@ namespace UnrealBuildTool.Rules
                     "PlacementMode",
                     "EditorWidgets",
                     "RHI",
-                    "ToolMenus"
+                    "ToolMenus",
+					"SceneOutliner"
                 }
 				);
 
@@ -62,6 +63,7 @@ namespace UnrealBuildTool.Rules
 				    "ContentBrowserData",
                     "Projects",
                     "PrefabricatorRuntime",
+					"SceneOutliner"
 					// ... add private dependencies that you statically link with here ...
 				}
 				);

@@ -60,8 +60,10 @@ using UPrefabricatorPropertyMap = TMap<FString, TObjectPtr<class UPrefabricatorP
 class PREFABRICATORRUNTIME_API FPrefabTools {
 public:
 	static bool CanCreatePrefab();
+	static bool CanCreatePrefabNoActors();
 	static void CreatePrefab();
-	static APrefabActor* CreatePrefabFromActors(const TArray<AActor*>& Actors);
+	static void CreatePrefabNoActors();
+	static APrefabActor* CreatePrefabFromActors(const TArray<AActor*>& Actors, UWorld* World=nullptr);
 	static void AssignAssetUserData(AActor* InActor, const FGuid& InItemID, APrefabActor* Prefab);
 	static void AssignAssetUserData(UActorComponent* InComp, const FGuid& InItemID, APrefabActor* Prefab);
 
