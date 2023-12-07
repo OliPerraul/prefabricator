@@ -27,7 +27,7 @@ struct PREFABRICATORRUNTIME_API FPrefabricatorPropertyAssetMapping {
 
 
 USTRUCT()
-struct PREFABRICATORRUNTIME_API FPrefabricatorNestedPropertyData
+struct PREFABRICATORRUNTIME_API FPrefabPropertySerializedItem
 {
 	GENERATED_BODY()
 
@@ -56,74 +56,74 @@ namespace
 	PREFABRICATORRUNTIME_API bool LoadReferencedAssetValues(FPrefabricatorPropertyAssetMapping& Mapping, FString& OutExportedValue);
 }
 
-UCLASS()
+UCLASS(BlueprintType)
 class PREFABRICATORRUNTIME_API UPrefabricatorProperty : public UObject {
 	GENERATED_BODY()
 public:
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	FString PropertyName;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	FString ExportedValue;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	TArray<FPrefabricatorPropertyAssetMapping> AssetSoftReferenceMappings;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	bool bIsCrossReferencedActor = false;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	bool bContainsStructProperty = false;
 
-	UPROPERTY()
-	TMap<FString, FPrefabricatorNestedPropertyData> NestedPropertyData;
+	UPROPERTY(EditAnywhere)
+	TMap<FString, FPrefabPropertySerializedItem> SerializedItems;
 
 	void SaveReferencedAssetValues();
 	void LoadReferencedAssetValues();
 };
 using UPrefabricatorPropertyMap = TMap<FString, TObjectPtr<UPrefabricatorProperty>>;
 
-USTRUCT()
-struct PREFABRICATORRUNTIME_API FPrefabricatorEntryBase 
+USTRUCT(BlueprintType)
+struct PREFABRICATORRUNTIME_API FPrefabricatorItemBase 
 {
-	GENERATED_BODY()
+	GENERATED_BODY(EditAnywhere)
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	FGuid PrefabItemID;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	FString ClassPath;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	FSoftClassPath ClassPathRef;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	FTransform RelativeTransform;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	TMap<FString, TObjectPtr<UPrefabricatorProperty>> Properties;
 
 #if WITH_EDITORONLY_DATA
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	FString Name;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	bool bIsStale = false;
 #endif // WITH_EDITORONLY_DATA
 };
 
-USTRUCT()
-struct PREFABRICATORRUNTIME_API FPrefabricatorComponentData : public FPrefabricatorEntryBase
+USTRUCT(BlueprintType)
+struct PREFABRICATORRUNTIME_API FPrefabricatorComponentData : public FPrefabricatorItemBase
 {
     GENERATED_BODY()
 };
 
-USTRUCT()
-struct PREFABRICATORRUNTIME_API FPrefabricatorActorData : public FPrefabricatorEntryBase
+USTRUCT(BlueprintType)
+struct PREFABRICATORRUNTIME_API FPrefabricatorActorData : public FPrefabricatorItemBase
 {
     GENERATED_BODY()
 
-    UPROPERTY()
+    UPROPERTY(EditAnywhere, meta = (TitleProperty = Name))
     TMap<FGuid, FPrefabricatorComponentData> Components;
 };
 
@@ -179,26 +179,26 @@ class PREFABRICATORRUNTIME_API UPrefabricatorAsset : public UPrefabricatorAssetI
 	GENERATED_UCLASS_BODY()
 public:
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere, meta = (TitleProperty = Name))
 	TMap<FGuid, FPrefabricatorComponentData> ComponentData;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere, meta=(TitleProperty=Name))
 	TMap<FGuid, FPrefabricatorActorData> ActorData;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	TEnumAsByte<EComponentMobility::Type> PrefabMobility;
 
 	// The ID that is regenerated on every update
 	// This allows prefab actors to test against their own LastUpdateID and determine if a refresh is needed
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	FGuid LastUpdateID;
 
 
 	/** Information for thumbnail rendering */
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	class UThumbnailInfo* ThumbnailInfo;
 
-	UPROPERTY()
+	UPROPERTY(EditAnywhere)
 	uint32 Version;
 
 public:

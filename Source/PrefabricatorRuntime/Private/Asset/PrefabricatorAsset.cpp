@@ -22,15 +22,6 @@ UPrefabricatorAsset* UPrefabricatorAsset::GetPrefabAsset(const FPrefabAssetSelec
 	return this;
 }
 
-//void UPrefabricatorAsset::AddCacheEntry(UPrefabricatorProperty* Property, const FString& PropertyPath, const FGuid& Guid)
-//{
-//}
-//
-//UPrefabricatorProperty* UPrefabricatorAsset::GetCacheEntry(const FGuid& Guid, const FString& PropertyPath)
-//{
-//}
-
-
 FVector FPrefabricatorAssetUtils::FindPivot(const TArray<AActor*>& InActors)
 {
 	FVector Pivot = FVector::ZeroVector;
@@ -159,10 +150,10 @@ void UPrefabricatorProperty::SaveReferencedAssetValues()
 		static const FString SoftReferenceSearchPattern = "([A-Za-z0-9_]+)'(.*?)'";
 		const FRegexPattern Pattern(*SoftReferenceSearchPattern);
 
-		for (auto& Entry : NestedPropertyData)
+		for (auto& SerializedItemEntry : SerializedItems)
 		{
-			auto& NestedPropertyDataItem = Entry.Value;
-			FRegexMatcher Matcher(Pattern, NestedPropertyDataItem.ExportedValue);
+			auto& SerializedItem = SerializedItemEntry.Value;
+			FRegexMatcher Matcher(Pattern, SerializedItem.ExportedValue);
 
 			while (Matcher.FindNext()) {
 				FString FullPath = Matcher.GetCaptureGroup(0);
@@ -185,7 +176,7 @@ void UPrefabricatorProperty::SaveReferencedAssetValues()
 					Mapping.AssetClassName = ClassName;
 					Mapping.AssetObjectPath = *ObjectPath;
 					Mapping.bUseQuotes = bUseQuotes;
-					NestedPropertyDataItem.AssetSoftReferenceMappings.Add(Mapping);
+					SerializedItem.AssetSoftReferenceMappings.Add(Mapping);
 					//UE_LOG(LogPrefabricatorAsset, Log, TEXT("######>>> Found Asset Ref: [%s][%s] | %s"), *Mapping.AssetClassName, *Mapping.AssetObjectPath.ToString(), *Mapping.AssetReference.GetAssetPathName().ToString());
 				}
 			}
@@ -241,41 +232,6 @@ namespace
 		Mapping.AssetObjectPath = ReferencedPath;
 		return true;
 	}
-
-	/*FString ResolveObjectPath(const TSoftObjectPtr<UObject>& Reference)
-	{	
-		FString ResolvedObjectPath;
-
-		static const FString SoftReferenceSearchPattern = "([A-Za-z0-9_]+)'(.*?)'";
-		const FRegexPattern Pattern(*SoftReferenceSearchPattern);
-
-		FRegexMatcher Matcher(Pattern, Reference.ToString());
-
-		if (Matcher.FindNext()) {
-			FString FullPath = Matcher.GetCaptureGroup(0);
-			FString ClassName = Matcher.GetCaptureGroup(1);
-			FString ObjectPath = Matcher.GetCaptureGroup(2);
-			if (ClassName == "PrefabricatorAssetUserData") {
-				return;
-			}
-			bool bUseQuotes = false;
-			if (ObjectPath.Len() >= 2 && ObjectPath.StartsWith("\"") && ObjectPath.EndsWith("\"")) {
-				ObjectPath = ObjectPath.Mid(1, ObjectPath.Len() - 2);
-				bUseQuotes = true;
-			}
-
-			FSoftObjectPath SoftPath(ObjectPath);
-
-			FPrefabricatorPropertyAssetMapping Mapping;
-			Mapping.AssetReference = SoftPath;
-			Mapping.AssetClassName = ClassName;
-			Mapping.AssetObjectPath = *ObjectPath;
-			Mapping.bUseQuotes = bUseQuotes;
-			LoadReferencedAssetValues(Mapping, ResolvedObjectPath);
-		}
-
-		return ResolvedObjectPath;
-	}*/
 }
 
 
@@ -289,11 +245,11 @@ void UPrefabricatorProperty::LoadReferencedAssetValues()
 			bModified = true;
 		}
 	}
-	for (auto& NestedPropertyDataItem : NestedPropertyData)
+	for (auto& SerializedItemsEntry : SerializedItems)
 	{
-		auto& NestedPropertyValue = NestedPropertyDataItem.Value;
-		for (auto& Mapping : NestedPropertyValue.AssetSoftReferenceMappings) {	
-			if (::LoadReferencedAssetValues(Mapping, NestedPropertyValue.ExportedValue, PropertyName))
+		auto& SerializedItem = SerializedItemsEntry.Value;
+		for (auto& Mapping : SerializedItem.AssetSoftReferenceMappings) {
+			if (::LoadReferencedAssetValues(Mapping, SerializedItem.ExportedValue, PropertyName))
 			{
 				bModified = true;
 			}
