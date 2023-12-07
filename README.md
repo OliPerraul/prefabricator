@@ -1,4 +1,4 @@
-Prefabricator for UE5
+Prefabricator V2 for UE5
 =====================
 
 Based on Prefabricator for Unreal Engine 4
