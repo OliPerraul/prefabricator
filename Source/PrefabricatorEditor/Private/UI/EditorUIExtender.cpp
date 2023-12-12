@@ -51,12 +51,12 @@ void FEditorUIExtender::Extend()
 		static TSharedRef<FExtender> OnExtendLevelEditorNoActorsContextMenu(const TSharedRef<FUICommandList> CommandList) {
 			TSharedRef<FExtender> Extender(new FExtender());
 
-			Extender->AddMenuExtension(
-				SceneOutliner::ExtensionHooks::Hierarchy
-				, EExtensionHook::After
-				, CommandList
-				, FMenuExtensionDelegate::CreateStatic(&Local::CreatePrefabNoActorsActionMenu)
-			);
+			//Extender->AddMenuExtension(
+			//	SceneOutliner::ExtensionHooks::Hierarchy
+			//	, EExtensionHook::After
+			//	, CommandList
+			//	, FMenuExtensionDelegate::CreateStatic(&Local::CreatePrefabNoActorsActionMenu)
+			//);
 
 			//	"SceneOutliner.DefaultContextMenuBase",
 			//	EExtensionHook::After,

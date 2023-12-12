@@ -30,9 +30,9 @@ APrefabActor::APrefabActor(const FObjectInitializer& ObjectInitializer)
 	PrefabComponent = ObjectInitializer.CreateDefaultSubobject<UPrefabComponent>(this, "PrefabComponent");
 	RootComponent = PrefabComponent;
 #if WITH_EDITOR
-#if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 4
-	FCoreUObjectDelegates::OnObjectPropertyChangedChain.AddUObject(this, &APrefabActor::OnObjectPropertyChangedChain);
-#endif
+//#if ENGINE_MAJOR_VERSION >= 5 && ENGINE_MINOR_VERSION >= 4
+//	FCoreUObjectDelegates::OnObjectPropertyChangedChain.AddUObject(this, &APrefabActor::OnObjectPropertyChangedChain);
+//#endif
 #endif
 }
 
